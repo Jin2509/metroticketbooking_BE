@@ -1,0 +1,55 @@
+name: Backend CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # gitleaks cần toàn bộ lịch sử
+
+      - name: Quét bí mật bị commit nhầm
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Build và test (Testcontainers + GreenMail + RBAC)
+        run: ./mvnw -B verify
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Kiểm tra image build được
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: metroticket-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Quét lỗ hổng image
+        uses: aquasecurity/trivy-action@<commit-sha-da-kiem-tra>
+        with:
+          image-ref: metroticket-api:ci
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true

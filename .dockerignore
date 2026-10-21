@@ -1,0 +1,9 @@
+target/
+.git/
+.idea/
+.env
+*.log
+setupbackend/
+*.md
+.DS_Store
+.github/
