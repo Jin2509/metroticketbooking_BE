@@ -35,7 +35,7 @@ public class AuthService {
     private final String dummyHash;
 
     public AuthService(UserRepository users, RoleRepository roles, PasswordEncoder passwordEncoder,
-                       VerificationCodeService verification, TokenService tokens, Clock clock) {
+            VerificationCodeService verification, TokenService tokens, Clock clock) {
         this.users = users;
         this.roles = roles;
         this.passwordEncoder = passwordEncoder;

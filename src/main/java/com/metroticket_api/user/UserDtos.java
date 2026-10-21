@@ -24,7 +24,7 @@ public final class UserDtos {
 
     /** Thông tin của chính mình, kèm danh sách quyền để frontend ẩn/hiện chức năng. */
     public record MeView(UUID id, String email, String fullName, UserStatus status,
-                         Set<String> roles, Set<String> permissions) {
+        Set<String> roles, Set<String> permissions) {
     }
 
     public record ChangeRolesRequest(@NotEmpty Set<String> roles) {
