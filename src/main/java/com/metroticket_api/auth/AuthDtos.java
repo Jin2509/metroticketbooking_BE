@@ -36,6 +36,13 @@ public final class AuthDtos {
             @NotBlank @Size(min = 8, max = 72) String newPassword) {
     }
 
-    public record TokenResponse(String accessToken, String tokenType, Instant expiresAt) {
+    public record RefreshRequest(@NotBlank String refreshToken) {
+    }
+
+    public record LogoutRequest(@NotBlank String refreshToken) {
+    }
+
+    public record TokenResponse(String accessToken, String tokenType, Instant expiresAt,
+            String refreshToken, Instant refreshTokenExpiresAt) {
     }
 }

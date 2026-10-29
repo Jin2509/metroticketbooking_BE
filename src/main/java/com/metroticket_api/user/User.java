@@ -66,6 +66,15 @@ public class User {
         }
     }
 
+    /** Đăng ký lại khi chưa xác thực email: ghi đè mật khẩu và họ tên. */
+    public void updatePendingRegistration(String newHash, String fullName) {
+        if (status != UserStatus.PENDING_VERIFICATION) {
+            throw new IllegalStateException("Chỉ cập nhật được tài khoản chưa xác thực");
+        }
+        this.passwordHash = newHash;
+        this.fullName = fullName;
+    }
+
     public void assignRole(Role role) { roles.add(role); }
 
     public void replaceRoles(Collection<Role> newRoles) {

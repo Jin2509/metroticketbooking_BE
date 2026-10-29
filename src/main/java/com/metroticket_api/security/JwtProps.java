@@ -9,11 +9,12 @@ import jakarta.validation.constraints.Size;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
-/** app.jwt.secret (>= 32 byte cho HS256), app.jwt.issuer, app.jwt.access-token-ttl */
+/** app.jwt.secret (>= 32 byte cho HS256), app.jwt.issuer, app.jwt.access-token-ttl, app.jwt.refresh-token-ttl */
 @Validated
 @ConfigurationProperties(prefix = "app.jwt")
 public record JwtProps(
         @NotNull @Size(min = 32, message = "app.jwt.secret phải dài tối thiểu 32 ký tự") String secret,
         @NotBlank String issuer,
-        @NotNull Duration accessTokenTtl) {
+        @NotNull Duration accessTokenTtl,
+        @NotNull Duration refreshTokenTtl) {
 }

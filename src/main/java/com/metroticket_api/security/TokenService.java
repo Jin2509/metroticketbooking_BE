@@ -3,6 +3,7 @@ package com.metroticket_api.security;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwsHeader;
@@ -35,6 +36,7 @@ public class TokenService {
         Instant expiresAt = now.plus(props.accessTokenTtl());
         List<String> roles = user.getRoles().stream().map(Role::getCode).sorted().toList();
         JwtClaimsSet claims = JwtClaimsSet.builder()
+                .id(UUID.randomUUID().toString()) // jti: dùng để thu hồi token khi đăng xuất
                 .issuer(props.issuer())
                 .subject(user.getId().toString())
                 .issuedAt(now)

@@ -5,6 +5,8 @@ import org.springframework.stereotype.Component;
 import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.context.Context;
 
+import com.metroticket_api.verification.VerificationPurpose;
+
 @Component 
 public class MailTemplates {
     private static final Locale VI = Locale.forLanguageTag("vi-VN");
@@ -14,16 +16,26 @@ public class MailTemplates {
         this.templateEngine = templateEngine;
     }
 
-    public MailMessage verificationCode(String to, String code, Duration lifetime) {
+    public MailMessage verificationCode(String to, VerificationPurpose purpose, String code, Duration lifetime) {
+        String subject = switch (purpose) {
+            case REGISTER -> "[MetroTicket] Mã xác thực email";
+            case RESET_PASSWORD -> "[MetroTicket] Mã xác thực đặt lại mật khẩu";
+        };
+        String intro = switch (purpose) {
+            case REGISTER -> "Cảm ơn bạn đã đăng ký MetroTicket. Mã xác thực email của bạn là:";
+            case RESET_PASSWORD -> "Bạn vừa yêu cầu đặt lại mật khẩu MetroTicket. Mã xác thực của bạn là:";
+        };
+
         Context ctx = new Context(VI);
+        ctx.setVariable("intro", intro);
         ctx.setVariable("code", code);
         ctx.setVariable("minutes", lifetime.toMinutes());
         
         String html = templateEngine.process("mail/verification-code", ctx);
         String text = """
-            Mã xác thực MetroTicket của bạn là: %s
+            %s %s
             Mã có hiệu lực trong %d phút. Không chia sẻ mã này cho bất kỳ ai.
-            """.formatted(code, lifetime.toMinutes());
-        return new MailMessage(to, "[MetroTicket] Mã xác thực email", text, html);
+            """.formatted(intro, code, lifetime.toMinutes());
+        return new MailMessage(to, subject, text, html);
     }
 }

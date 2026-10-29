@@ -155,6 +155,127 @@ class AuthFlowIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    @Test
+    void refreshRotatesAndLogoutRevokesTokens() throws Exception {
+        String email = "dung.pham@example.com";
+        registerAndVerify(email, 0);
+
+        String first = loginBody(email, "MatKhau@123");
+        String refresh1 = JsonPath.read(first, "$.refreshToken");
+
+        // Refresh → cặp token mới, refresh token cũ bị thu hồi
+        String second = mvc.perform(post("/api/auth/refresh").contentType(MediaType.APPLICATION_JSON)
+                        .content(refreshJson(refresh1)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").isNotEmpty())
+                .andReturn().getResponse().getContentAsString();
+        String refresh2 = JsonPath.read(second, "$.refreshToken");
+        assertThat(refresh2).isNotEqualTo(refresh1);
+
+        // Dùng lại token cũ → 401 và cả phiên bị thu hồi (refresh2 cũng chết)
+        mvc.perform(post("/api/auth/refresh").contentType(MediaType.APPLICATION_JSON).content(refreshJson(refresh1)))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/auth/refresh").contentType(MediaType.APPLICATION_JSON).content(refreshJson(refresh2)))
+                .andExpect(status().isUnauthorized());
+
+        // Đăng nhập lại rồi đăng xuất kèm access token
+        String third = loginBody(email, "MatKhau@123");
+        String access = JsonPath.read(third, "$.accessToken");
+        String refresh3 = JsonPath.read(third, "$.refreshToken");
+        mvc.perform(get("/api/me").header("Authorization", "Bearer " + access))
+                .andExpect(status().isOk());
+
+        mvc.perform(post("/api/auth/logout").header("Authorization", "Bearer " + access)
+                        .contentType(MediaType.APPLICATION_JSON).content(refreshJson(refresh3)))
+                .andExpect(status().isNoContent());
+
+        mvc.perform(get("/api/me").header("Authorization", "Bearer " + access))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/auth/refresh").contentType(MediaType.APPLICATION_JSON).content(refreshJson(refresh3)))
+                .andExpect(status().isUnauthorized());
+
+        // Đăng xuất lần nữa (token đã thu hồi) vẫn 204
+        mvc.perform(post("/api/auth/logout").header("Authorization", "Bearer " + access)
+                        .contentType(MediaType.APPLICATION_JSON).content(refreshJson(refresh3)))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void forgotPasswordResetsAndSignsOutEverywhere() throws Exception {
+        String email = "em.vo@example.com";
+        registerAndVerify(email, 0);
+        String oldRefresh = JsonPath.read(loginBody(email, "MatKhau@123"), "$.refreshToken");
+
+        mvc.perform(post("/api/auth/forgot-password").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"%s\"}".formatted(email)))
+                .andExpect(status().isAccepted());
+        // Email không tồn tại cũng trả 202 (không lộ tài khoản)
+        mvc.perform(post("/api/auth/forgot-password").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"khong-co@example.com\"}"))
+                .andExpect(status().isAccepted());
+
+        assertThat(greenMail.waitForIncomingEmail(5000, 2)).isTrue();
+        MimeMessage mail = greenMail.getReceivedMessages()[1];
+        assertThat(mail.getSubject()).contains("đặt lại mật khẩu");
+        String code = extractCode(GreenMailUtil.getBody(mail));
+
+        mvc.perform(post("/api/auth/reset-password").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"%s\",\"code\":\"%s\",\"newPassword\":\"MatKhauMoi@456\"}"
+                                .formatted(email, code)))
+                .andExpect(status().isNoContent());
+
+        mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON).content(loginJson(email)))
+                .andExpect(status().isUnauthorized());
+        login(email, "MatKhauMoi@456");
+        mvc.perform(post("/api/auth/refresh").contentType(MediaType.APPLICATION_JSON).content(refreshJson(oldRefresh)))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void unverifiedEmailCanRegisterAgain() throws Exception {
+        String email = "giang.do@example.com";
+        String json = """
+                {"email":"%s","password":"MatKhau@123","fullName":"Đỗ Giang"}
+                """.formatted(email);
+        mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON).content(json))
+                .andExpect(status().isAccepted());
+        // Đăng ký lại ngay → vướng cooldown gửi mã
+        mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON).content(json))
+                .andExpect(status().isTooManyRequests());
+        assertThat(greenMail.waitForIncomingEmail(5000, 1)).isTrue();
+        String code = extractCode(GreenMailUtil.getBody(greenMail.getReceivedMessages()[0]));
+        mvc.perform(post("/api/auth/verify-email").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"%s\",\"code\":\"%s\"}".formatted(email, code)))
+                .andExpect(status().isNoContent());
+        // Đã xác thực → đăng ký lại bị 409
+        mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON).content(json))
+                .andExpect(status().isConflict());
+    }
+
+    private void registerAndVerify(String email, int mailIndex) throws Exception {
+        mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"email":"%s","password":"MatKhau@123","fullName":"Người Dùng"}
+                                """.formatted(email)))
+                .andExpect(status().isAccepted());
+        assertThat(greenMail.waitForIncomingEmail(5000, mailIndex + 1)).isTrue();
+        String code = extractCode(GreenMailUtil.getBody(greenMail.getReceivedMessages()[mailIndex]));
+        mvc.perform(post("/api/auth/verify-email").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"%s\",\"code\":\"%s\"}".formatted(email, code)))
+                .andExpect(status().isNoContent());
+    }
+
+    private String loginBody(String email, String password) throws Exception {
+        return mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"%s\",\"password\":\"%s\"}".formatted(email, password)))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+    }
+
+    private static String refreshJson(String refreshToken) {
+        return "{\"refreshToken\":\"%s\"}".formatted(refreshToken);
+    }
+
     private String login(String email, String password) throws Exception {
         String body = mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"%s\",\"password\":\"%s\"}".formatted(email, password)))

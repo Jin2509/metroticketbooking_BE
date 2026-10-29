@@ -35,7 +35,7 @@ public class VerificationMailListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onCodeIssued(VerificationCodeIssued event) {
         try {
-            mailSender.send(templates.verificationCode(event.email(), event.code(), event.lifetime()));
+            mailSender.send(templates.verificationCode(event.email(), event.purpose(), event.code(), event.lifetime()));
         } catch (MailSendException e) {
             // Người dùng có thể bấm "gửi lại mã" sau cooldown
             log.error("Gửi mã xác thực thất bại: {}", e.getMessage(), e);

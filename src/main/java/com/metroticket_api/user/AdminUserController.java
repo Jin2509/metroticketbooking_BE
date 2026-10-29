@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.metroticket_api.auth.RefreshTokenService;
 import com.metroticket_api.rbac.Role;
 import com.metroticket_api.rbac.RoleRepository;
 import com.metroticket_api.security.CurrentUser;
@@ -34,10 +35,12 @@ public class AdminUserController {
 
     private final UserRepository users;
     private final RoleRepository roles;
+    private final RefreshTokenService refreshTokens;
 
-    public AdminUserController(UserRepository users, RoleRepository roles) {
+    public AdminUserController(UserRepository users, RoleRepository roles, RefreshTokenService refreshTokens) {
         this.users = users;
         this.roles = roles;
+        this.refreshTokens = refreshTokens;
     }
 
     @GetMapping
@@ -67,6 +70,10 @@ public class AdminUserController {
     public UserView changeStatus(@PathVariable UUID id, @Valid @RequestBody ChangeStatusRequest req) {
         User user = loadOther(id);
         user.changeStatus(req.status());
+        if (req.status() == UserStatus.LOCKED) {
+            // Không cho refresh nữa; access token còn lại tự hết hạn sau app.jwt.access-token-ttl
+            refreshTokens.revokeAll(user.getId());
+        }
         return UserView.of(user);
     }
 
