@@ -33,6 +33,22 @@ public final class UserDtos {
     public record ChangeStatusRequest(@NotNull UserStatus status) {
     }
 
+    public record ChangePasswordRequest(@NotEmpty String newPassword) {
+    }
+
+    public record CreateUserRequest(
+            @NotEmpty @jakarta.validation.constraints.Email String email,
+            @NotEmpty String fullName,
+            @NotEmpty Set<String> roles,
+            String temporaryPassword) {
+    }
+
+    public record UpdateProfileRequest(@NotEmpty String fullName, String email) {
+    }
+
+    public record VerifyEmailChangeRequest(@NotNull String email, @NotNull String code) {
+    }
+
     static Set<String> roleCodes(Collection<Role> roles) {
         return roles.stream().map(Role::getCode).collect(Collectors.toCollection(TreeSet::new));
     }

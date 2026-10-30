@@ -66,6 +66,14 @@ public class User {
         }
     }
 
+    public void changeEmail(String newEmail) {
+        this.email = newEmail;
+    }
+
+    public void changeFullName(String fullName) {
+        this.fullName = fullName;
+    }
+
     /** Đăng ký lại khi chưa xác thực email: ghi đè mật khẩu và họ tên. */
     public void updatePendingRegistration(String newHash, String fullName) {
         if (status != UserStatus.PENDING_VERIFICATION) {
