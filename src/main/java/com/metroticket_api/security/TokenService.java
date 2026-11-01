@@ -19,6 +19,7 @@ import com.metroticket_api.user.User;
 public class TokenService {
 
     public static final String ROLES_CLAIM = "roles";
+    public static final String ISSUED_AT_MILLIS_CLAIM = "iat_ms";
 
     private final JwtEncoder encoder;
     private final JwtProps props;
@@ -41,6 +42,7 @@ public class TokenService {
                 .subject(user.getId().toString())
                 .issuedAt(now)
                 .expiresAt(expiresAt)
+                .claim(ISSUED_AT_MILLIS_CLAIM, now.toEpochMilli())
                 .claim("email", user.getEmail())
                 // Token chỉ chứa vai trò (nhỏ gọn); quyền được tra từ RolePermissionCache mỗi request,
                 // nên admin đổi quyền của vai trò thì có hiệu lực ngay, không cần cấp lại token.

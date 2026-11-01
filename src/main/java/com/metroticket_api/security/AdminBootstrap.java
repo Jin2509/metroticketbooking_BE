@@ -48,7 +48,11 @@ public class AdminBootstrap implements ApplicationRunner {
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
-        if (email.isBlank() || password.isBlank() || users.existsByRoles_Code(RoleCodes.ADMIN)) {
+        if (email.isBlank() || password.isBlank()) {
+            return;
+        }
+        if (users.existsByRoles_Code(RoleCodes.ADMIN)) {
+            log.info("Đã có tài khoản ADMIN, bỏ qua ADMIN_EMAIL/ADMIN_PASSWORD: đổi 2 biến này không làm đổi tài khoản hiện có");
             return;
         }
         String normalized = email.trim().toLowerCase(Locale.ROOT);

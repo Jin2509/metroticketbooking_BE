@@ -43,6 +43,14 @@ public class EmailVerificationChallenge {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    /** Người yêu cầu mã, chỉ có ở luồng đã đăng nhập (đổi email). */
+    @Column(name = "requested_by")
+    private UUID requestedBy;
+
+    /** Hash của ticket đăng nhập 2 lớp, chỉ có ở mục đích LOGIN_2FA. */
+    @Column(name = "login_ticket_hash", length = 64)
+    private String loginTicketHash;
+
     // Khoá lạc quan: chặn 2 request verify song song cùng dùng một mã
     @Version
     private long version;
@@ -51,10 +59,11 @@ public class EmailVerificationChallenge {
         // cho JPA
     }
 
-    public EmailVerificationChallenge(String email, VerificationPurpose purpose, String codeHash,
+    public EmailVerificationChallenge(String email, VerificationPurpose purpose, UUID requestedBy, String codeHash,
                                       Instant now, Instant expiresAt) {
         this.id = UUID.randomUUID();
         this.email = email;
+        this.requestedBy = requestedBy;
         this.purpose = purpose;
         this.codeHash = codeHash;
         this.createdAt = now;
@@ -67,6 +76,10 @@ public class EmailVerificationChallenge {
 
     public boolean isConsumed() {
         return consumedAt != null;
+    }
+
+    public void bindLoginTicket(String ticketHash) {
+        loginTicketHash = ticketHash;
     }
 
     public void recordFailedAttempt() {
@@ -84,4 +97,5 @@ public class EmailVerificationChallenge {
     public Instant getExpiresAt() { return expiresAt; }
     public int getFailedAttempts() { return failedAttempts; }
     public Instant getCreatedAt() { return createdAt; }
+    public UUID getRequestedBy() { return requestedBy; }
 }

@@ -21,11 +21,13 @@ public class MailTemplates {
             case REGISTER -> "[MetroTicket] Mã xác thực email";
             case RESET_PASSWORD -> "[MetroTicket] Mã xác thực đặt lại mật khẩu";
             case CHANGE_EMAIL -> "[MetroTicket] Xác thực thay đổi email";
+            case LOGIN_2FA -> "[MetroTicket] Mã xác nhận đăng nhập";
         };
         String intro = switch (purpose) {
             case REGISTER -> "Cảm ơn bạn đã đăng ký MetroTicket. Mã xác thực email của bạn là:";
             case RESET_PASSWORD -> "Bạn vừa yêu cầu đặt lại mật khẩu MetroTicket. Mã xác thực của bạn là:";
             case CHANGE_EMAIL -> "Bạn vừa yêu cầu thay đổi email đăng nhập MetroTicket. Mã xác thực mới của bạn là:";
+            case LOGIN_2FA -> "Có người vừa đăng nhập tài khoản MetroTicket của bạn bằng đúng mật khẩu. Nếu là bạn, hãy nhập mã xác nhận sau. Nếu không phải bạn, hãy đổi mật khẩu ngay. Mã xác nhận là:";
         };
 
         Context ctx = new Context(VI);
@@ -39,6 +41,26 @@ public class MailTemplates {
             Mã có hiệu lực trong %d phút. Không chia sẻ mã này cho bất kỳ ai.
             """.formatted(intro, code, lifetime.toMinutes());
         return new MailMessage(to, subject, text, html);
+    }
+
+    /** Bản email của một thông báo tài khoản (xem NotificationService.notifyWithEmail). */
+    public MailMessage accountNotice(String to, String fullName, String title, String body) {
+        String text = """
+            Xin chào %s,
+            %s
+            """.formatted(fullName, body);
+        return MailMessage.text(to, "[MetroTicket] " + title, text);
+    }
+
+    /** Gửi tới email CŨ, để chủ tài khoản biết nếu việc đổi email không phải do họ thực hiện. */
+    public MailMessage emailChangedNotice(String oldEmail, String newEmail) {
+        String subject = "[MetroTicket] Email đăng nhập đã được thay đổi";
+        String text = """
+            Xin chào,
+            Email đăng nhập tài khoản MetroTicket của bạn vừa được đổi thành: %s
+            Nếu bạn không thực hiện thay đổi này, hãy liên hệ quản trị viên ngay.
+            """.formatted(newEmail);
+        return MailMessage.text(oldEmail, subject, text);
     }
 
     public MailMessage adminPasswordResetNotice(String to, String newPassword) {

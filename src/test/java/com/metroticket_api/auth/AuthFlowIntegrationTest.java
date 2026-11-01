@@ -214,9 +214,8 @@ class AuthFlowIntegrationTest {
                         .content("{\"email\":\"khong-co@example.com\"}"))
                 .andExpect(status().isAccepted());
 
-        assertThat(greenMail.waitForIncomingEmail(5000, 2)).isTrue();
-        MimeMessage mail = greenMail.getReceivedMessages()[1];
-        assertThat(mail.getSubject()).contains("đặt lại mật khẩu");
+        // Sau xác thực còn có mail chào mừng gửi bất đồng bộ, nên tìm theo tiêu đề thay vì thứ tự
+        MimeMessage mail = awaitMailWithSubject("đặt lại mật khẩu");
         String code = extractCode(GreenMailUtil.getBody(mail));
 
         mvc.perform(post("/api/auth/reset-password").contentType(MediaType.APPLICATION_JSON)
@@ -250,6 +249,19 @@ class AuthFlowIntegrationTest {
         // Đã xác thực → đăng ký lại bị 409
         mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON).content(json))
                 .andExpect(status().isConflict());
+    }
+
+    private MimeMessage awaitMailWithSubject(String subject) throws Exception {
+        long deadline = System.currentTimeMillis() + 5000;
+        while (true) {
+            for (MimeMessage mail : greenMail.getReceivedMessages()) {
+                if (mail.getSubject().contains(subject)) {
+                    return mail;
+                }
+            }
+            assertThat(System.currentTimeMillis()).as("chờ mail '%s'", subject).isLessThan(deadline);
+            Thread.sleep(50);
+        }
     }
 
     private void registerAndVerify(String email, int mailIndex) throws Exception {

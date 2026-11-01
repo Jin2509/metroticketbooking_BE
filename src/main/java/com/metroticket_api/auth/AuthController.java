@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -12,12 +13,16 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.metroticket_api.auth.AuthDtos.EmailRequest;
+import com.metroticket_api.auth.AuthDtos.LoginCodeRequest;
 import com.metroticket_api.auth.AuthDtos.LoginRequest;
+import com.metroticket_api.auth.AuthDtos.LoginResponse;
+import com.metroticket_api.auth.AuthDtos.LoginTicketRequest;
 import com.metroticket_api.auth.AuthDtos.LogoutRequest;
 import com.metroticket_api.auth.AuthDtos.RefreshRequest;
 import com.metroticket_api.auth.AuthDtos.RegisterRequest;
 import com.metroticket_api.auth.AuthDtos.ResetPasswordRequest;
 import com.metroticket_api.auth.AuthDtos.TokenResponse;
+import com.metroticket_api.auth.AuthDtos.TwoFactorChallengeResponse;
 import com.metroticket_api.auth.AuthDtos.VerifyEmailRequest;
 
 @RestController
@@ -51,8 +56,21 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public TokenResponse login(@Valid @RequestBody LoginRequest req) {
-        return authService.login(req.email(), req.password());
+    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest req) {
+        LoginResponse result = authService.login(req.email(), req.password());
+        HttpStatus status = result instanceof TwoFactorChallengeResponse ? HttpStatus.ACCEPTED : HttpStatus.OK;
+        return ResponseEntity.status(status).body(result);
+    }
+
+    @PostMapping("/login/2fa")
+    public TokenResponse verifyLoginCode(@Valid @RequestBody LoginCodeRequest req) {
+        return authService.verifyLoginCode(req.ticket(), req.code());
+    }
+
+    @PostMapping("/login/2fa/resend")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public void resendLoginCode(@Valid @RequestBody LoginTicketRequest req) {
+        authService.resendLoginCode(req.ticket());
     }
 
     @PostMapping("/refresh")

@@ -16,6 +16,7 @@ public final class PermissionCodes {
     public static final String USER_VIEW = "USER_VIEW";
     public static final String USER_MANAGE = "USER_MANAGE";
     public static final String RBAC_MANAGE = "RBAC_MANAGE";
+    public static final String NOTIFICATION_MANAGE = "NOTIFICATION_MANAGE";
 
     private PermissionCodes() {
     }

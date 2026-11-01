@@ -41,6 +41,18 @@ public class User {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    @Column(name = "email_verified_at")
+    private Instant emailVerifiedAt;
+
+    @Column(name = "last_login_at")
+    private Instant lastLoginAt;
+
+    @Column(name = "password_changed_at")
+    private Instant passwordChangedAt;
+
+    @Column(name = "two_factor_enabled", nullable = false)
+    private boolean twoFactorEnabled;
+
     @ManyToMany
     @JoinTable(name = "user_role",
             joinColumns = @JoinColumn(name = "user_id"),
@@ -60,10 +72,15 @@ public class User {
         this.createdAt = now;
     }
 
-    public void activate() {
+    public void activate(Instant now) {
         if (status == UserStatus.PENDING_VERIFICATION) {
             status = UserStatus.ACTIVE;
+            emailVerifiedAt = now;
         }
+    }
+
+    public void recordLogin(Instant now) {
+        this.lastLoginAt = now;
     }
 
     public void changeEmail(String newEmail) {
@@ -90,8 +107,15 @@ public class User {
         roles.addAll(newRoles);
     }
 
-    public void changePassword(String newHash) { this.passwordHash = newHash; }
+    public void changePassword(String newHash, Instant now) {
+        this.passwordHash = newHash;
+        this.passwordChangedAt = now;
+    }
+
+
     public void changeStatus(UserStatus status) { this.status = status; }
+
+    public void changeTwoFactor(boolean enabled) { this.twoFactorEnabled = enabled; }
 
     public UUID getId() { return id; }
     public String getEmail() { return email; }
@@ -99,5 +123,9 @@ public class User {
     public String getFullName() { return fullName; }
     public UserStatus getStatus() { return status; }
     public Instant getCreatedAt() { return createdAt; }
+    public Instant getEmailVerifiedAt() { return emailVerifiedAt; }
+    public Instant getLastLoginAt() { return lastLoginAt; }
+    public Instant getPasswordChangedAt() { return passwordChangedAt; }
+    public boolean isTwoFactorEnabled() { return twoFactorEnabled; }
     public Set<Role> getRoles() { return roles; }
 }

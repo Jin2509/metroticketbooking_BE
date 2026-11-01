@@ -1,5 +1,6 @@
 setupbackend/
 .env
+seed/demo-users.json
 
 target/
 .DS_Store

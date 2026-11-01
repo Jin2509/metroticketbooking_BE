@@ -7,6 +7,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
+import com.metroticket_api.security.ValidPassword;
+
 /** Các request/response của /api/auth. */
 public final class AuthDtos {
 
@@ -15,7 +17,7 @@ public final class AuthDtos {
 
     public record RegisterRequest(
             @NotBlank @Email @Size(max = 320) String email,
-            @NotBlank @Size(min = 8, max = 72, message = "Mật khẩu từ 8 đến 72 ký tự") String password,
+            @NotBlank @ValidPassword String password,
             @NotBlank @Size(max = 120) String fullName) {
     }
 
@@ -33,7 +35,15 @@ public final class AuthDtos {
     public record ResetPasswordRequest(
             @NotBlank @Email String email,
             @NotBlank @Pattern(regexp = "\\d{6}", message = "Mã gồm 6 chữ số") String code,
-            @NotBlank @Size(min = 8, max = 72) String newPassword) {
+            @NotBlank @ValidPassword String newPassword) {
+    }
+
+    public record LoginCodeRequest(
+            @NotBlank String ticket,
+            @NotBlank @Pattern(regexp = "\\d{6}", message = "Mã gồm 6 chữ số") String code) {
+    }
+
+    public record LoginTicketRequest(@NotBlank String ticket) {
     }
 
     public record RefreshRequest(@NotBlank String refreshToken) {
@@ -42,7 +52,15 @@ public final class AuthDtos {
     public record LogoutRequest(@NotBlank String refreshToken) {
     }
 
+    /** Kết quả login: có token ngay, hoặc phải qua bước xác nhận 2 lớp. */
+    public sealed interface LoginResponse permits TokenResponse, TwoFactorChallengeResponse {
+    }
+
     public record TokenResponse(String accessToken, String tokenType, Instant expiresAt,
-            String refreshToken, Instant refreshTokenExpiresAt) {
+            String refreshToken, Instant refreshTokenExpiresAt) implements LoginResponse {
+    }
+
+    public record TwoFactorChallengeResponse(boolean twoFactorRequired, String ticket, Instant expiresAt)
+            implements LoginResponse {
     }
 }
