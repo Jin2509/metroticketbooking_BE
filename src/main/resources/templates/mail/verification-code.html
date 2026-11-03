@@ -1,61 +1,30 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" lang="vi">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Mã xác thực MetroTicket</title>
-  </head>
-  <body
-    style="
-      margin: 0;
-      padding: 24px;
-      background: #f4f6f8;
-      font-family: Arial, Helvetica, sans-serif;
-      color: #1f2933;
-    "
-  >
-    <table
-      role="presentation"
-      width="100%"
-      cellpadding="0"
-      cellspacing="0"
-      style="
-        max-width: 480px;
-        margin: 0 auto;
-        background: #ffffff;
-        border-radius: 8px;
-        padding: 32px;
-      "
-    >
-      <tr>
-        <td>
-          <h2 style="margin: 0 0 16px; color: #0b5394">MetroTicket</h2>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{mail/layout :: page(~{::content})}">
+  <body>
+    <div th:fragment="content">
+      <p style="margin: 0 0 20px" th:text="${intro}">Nhập mã dưới đây để tiếp tục.</p>
 
-          <p th:text="${intro}">Mã xác thực của bạn là:</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 20px">
+        <tr>
+          <td align="center" style="background-color: #f0f5fb; border: 1px solid #c5d8ee; padding: 20px 12px">
+            <div style="margin: 0 0 6px; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: #52606d">Mã xác thực</div>
+            <div style="font-family: 'Courier New', Courier, monospace; font-size: 34px; line-height: 1.2; font-weight: bold; letter-spacing: 8px; color: #0b5394"
+                 th:text="${code}">012345</div>
+            <div style="margin: 6px 0 0; font-size: 13px; color: #52606d">
+              Có hiệu lực trong <strong th:text="${minutes}">10</strong> phút
+            </div>
+          </td>
+        </tr>
+      </table>
 
-          <p
-            style="
-              font-size: 32px;
-              font-weight: bold;
-              letter-spacing: 8px;
-              margin: 16px 0;
-            "
-            th:text="${code}"
-          >
-            123456
-          </p>
-
-          <p>
-            Mã có hiệu lực trong
-            <strong th:text="${minutes}">10</strong> phút.
-          </p>
-
-          <p style="color: #7b8794; font-size: 13px">
-            Không chia sẻ mã này cho bất kỳ ai. Nếu bạn không yêu cầu, hãy bỏ
-            qua email này.
-          </p>
-        </td>
-      </tr>
-    </table>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="background-color: #fff8e6; border-left: 4px solid #f2a900; padding: 12px 16px; font-size: 14px; line-height: 1.5; color: #513c06">
+            <strong>Không chia sẻ mã này cho bất kỳ ai.</strong>
+            <span th:text="${warning}">Nếu không phải bạn, hãy bỏ qua email này.</span>
+          </td>
+        </tr>
+      </table>
+    </div>
   </body>
 </html>

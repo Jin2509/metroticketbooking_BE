@@ -226,6 +226,27 @@ class TwoFactorLoginIntegrationTest {
         awaitMail(email, "Tài khoản đã được mở", 1);
     }
 
+    /** Bị khoá sau bước mật khẩu: ticket cũ không xin thêm được mã. */
+    @Test
+    void lockedAfterPasswordStepCannotResendCode() throws Exception {
+        String email = "tf.locked.resend@example.com";
+        String token = enabledUser(email);
+        String id = JsonPath.read(send(get("/api/me"), token, null).andReturn().getResponse().getContentAsString(), "$.id");
+        String ticket = ticketOf(login(email));
+        awaitMail(email, CODE_SUBJECT, 1);
+
+        String admin = JsonPath.read(mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"admin@metroticket.test\",\"password\":\"Admin@12345\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(), "$.accessToken");
+        send(patch("/api/admin/users/" + id + "/status"), admin, "{\"status\":\"LOCKED\"}").andExpect(status().isOk());
+
+        mvc.perform(post("/api/auth/login/2fa/resend").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ticket\":\"%s\"}".formatted(ticket)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCOUNT_LOCKED"));
+    }
+
     @Test
     void accountEventsAreEmailed() throws Exception {
         String email = "tf.notice@example.com";

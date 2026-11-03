@@ -11,8 +11,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 /**
- * Chống dò mật khẩu: sai quá app.auth.login-max-failures lần liên tiếp thì khoá đăng nhập theo
- * email trong app.auth.login-lock-duration. Đếm cả email không tồn tại để không lộ tài khoản.
+ * Chống dò mật khẩu và mã OTP: sai quá app.auth.login-max-failures lần liên tiếp thì khoá theo
+ * khoá đếm (email, hoặc mục đích:email với mã OTP) trong app.auth.login-lock-duration.
+ * Đếm cả email không tồn tại để không lộ tài khoản.
  * Redis lỗi thì bỏ qua (fail-open), giống AccessTokenDenylist.
  */
 @Component
@@ -33,30 +34,30 @@ public class LoginAttemptLimiter {
         this.lockDuration = lockDuration;
     }
 
-    public void ensureNotLocked(String email) {
+    public void ensureNotLocked(String key) {
         try {
-            String count = redis.opsForValue().get(PREFIX + email);
+            String count = redis.opsForValue().get(PREFIX + key);
             if (count != null && Long.parseLong(count) >= maxFailures) {
                 throw new AuthException(HttpStatus.TOO_MANY_REQUESTS,
-                        "Nhập sai mật khẩu quá nhiều lần, vui lòng thử lại sau " + lockDuration.toMinutes() + " phút");
+                        "Nhập sai quá nhiều lần, vui lòng thử lại sau " + lockDuration.toMinutes() + " phút");
             }
         } catch (DataAccessException e) {
             log.warn("Không đọc được bộ đếm đăng nhập trong Redis: {}", e.getMessage());
         }
     }
 
-    public void recordFailure(String email) {
+    public void recordFailure(String key) {
         try {
-            redis.opsForValue().increment(PREFIX + email);
-            redis.expire(PREFIX + email, lockDuration);
+            redis.opsForValue().increment(PREFIX + key);
+            redis.expire(PREFIX + key, lockDuration);
         } catch (DataAccessException e) {
             log.warn("Không ghi được bộ đếm đăng nhập vào Redis: {}", e.getMessage());
         }
     }
 
-    public void reset(String email) {
+    public void reset(String key) {
         try {
-            redis.delete(PREFIX + email);
+            redis.delete(PREFIX + key);
         } catch (DataAccessException e) {
             log.warn("Không xoá được bộ đếm đăng nhập trong Redis: {}", e.getMessage());
         }

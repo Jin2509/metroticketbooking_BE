@@ -47,9 +47,11 @@ class NotificationIntegrationTest {
             call(post("/api/auth/login"), null, credentials(email, PASSWORD)).andExpect(status().isOk());
         }
         call(post("/api/auth/login"), null, credentials("pending.demo@metroticket.test", PASSWORD))
-                .andExpect(status().isForbidden()).andExpect(jsonPath("$.detail").value("Email chưa được xác thực"));
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.detail").value("Email chưa được xác thực"))
+                .andExpect(jsonPath("$.code").value("EMAIL_NOT_VERIFIED"));
         call(post("/api/auth/login"), null, credentials("locked.demo@metroticket.test", PASSWORD))
-                .andExpect(status().isForbidden()).andExpect(jsonPath("$.detail").value("Tài khoản đã bị khoá"));
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.detail").value("Tài khoản đã bị khoá"))
+                .andExpect(jsonPath("$.code").value("ACCOUNT_LOCKED"));
         // Quyền mới được cấp cho ADMIN qua migration
         call(get("/api/me"), token(ADMIN), null).andExpect(jsonPath("$.permissions", hasItem("NOTIFICATION_MANAGE")));
     }

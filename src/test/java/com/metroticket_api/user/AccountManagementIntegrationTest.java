@@ -14,6 +14,9 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import jakarta.mail.BodyPart;
+import jakarta.mail.Multipart;
+import jakarta.mail.Part;
 import jakarta.mail.internet.MimeMessage;
 
 import org.junit.jupiter.api.Test;
@@ -150,6 +153,34 @@ class AccountManagementIntegrationTest {
         call(post("/api/auth/login"), null, credentials(email, "MatKhauMoi@456")).andExpect(status().isOk());
     }
 
+    /** Bảng users chỉ có tài khoản đã xác nhận mã; sau đó đăng nhập chỉ cần email và mật khẩu. */
+    @Test
+    void registrationIsNotSavedUntilCodeIsConfirmed() throws Exception {
+        String email = "chua-luu@example.com";
+        String count = "select count(*) from app_user where email = ?";
+        call(post("/api/auth/register"), null,
+                "{\"email\":\"%s\",\"password\":\"%s\",\"fullName\":\"A\"}".formatted(email, PASSWORD))
+                .andExpect(status().isAccepted());
+        String code = extractCode(awaitMail(email, "xác thực email", 1));
+        assertThat(jdbc.queryForObject(count, Long.class, email)).isZero();
+
+        // Gửi lại mã vẫn dùng được thông tin đăng ký đang chờ
+        jdbc.update("update email_verification_challenge set created_at = created_at - interval '2 minutes' where email = ?", email);
+        call(post("/api/auth/resend-code"), null, "{\"email\":\"%s\"}".formatted(email)).andExpect(status().isAccepted());
+        String newCode = extractCode(awaitMail(email, "xác thực email", 2));
+        assertThat(jdbc.queryForObject(count, Long.class, email)).isZero();
+
+        String wrong = newCode.equals("000000") ? "000001" : "000000";
+        call(post("/api/auth/verify-email"), null, codeJson(email, wrong)).andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject(count, Long.class, email)).isZero();
+
+        call(post("/api/auth/verify-email"), null, codeJson(email, newCode)).andExpect(status().isNoContent());
+        assertThat(jdbc.queryForObject(count, Long.class, email)).isOne();
+        call(post("/api/auth/login"), null, credentials(email, PASSWORD))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").exists());
+    }
+
     /** BCrypt từ chối mật khẩu trên 72 byte; 72 ký tự có dấu vượt giới hạn này. */
     @Test
     void passwordLongerThan72BytesIsRejected() throws Exception {
@@ -247,7 +278,7 @@ class AccountManagementIntegrationTest {
         call(post("/api/admin/users"), admin, "{\"email\":\"%s\",\"fullName\":\"N\",\"roles\":[\"STAFF\"]}".formatted(email)).andExpect(status().isConflict());
 
         // Mail gửi sau commit, chứa mật khẩu tạm đăng nhập được
-        String body = (String) awaitMail(email, "đã được tạo", 1).getContent();
+        String body = textPart(awaitMail(email, "đã được tạo", 1));
         Matcher password = Pattern.compile("Mật khẩu tạm thời: (\\S+)").matcher(body);
         assertThat(password.find()).isTrue();
         call(post("/api/auth/login"), null, credentials(email, password.group(1))).andExpect(status().isOk());
@@ -331,6 +362,21 @@ class AccountManagementIntegrationTest {
 
     private String userId(String token) throws Exception {
         return JsonPath.read(call(get("/api/me"), token, null).andReturn().getResponse().getContentAsString(), "$.id");
+    }
+
+    /** Bản text của mail: mail có cả text và HTML nên nội dung nằm trong các lớp multipart lồng nhau. */
+    private static String textPart(Part part) throws Exception {
+        if (part.isMimeType("text/plain")) {
+            return (String) part.getContent();
+        }
+        Multipart multipart = (Multipart) part.getContent();
+        for (int i = 0; i < multipart.getCount(); i++) {
+            BodyPart child = multipart.getBodyPart(i);
+            if (child.isMimeType("text/plain") || child.isMimeType("multipart/*")) {
+                return textPart(child);
+            }
+        }
+        throw new AssertionError("Mail không có bản text");
     }
 
     /** Chờ mail thứ count gửi tới một địa chỉ. Mail gửi bất đồng bộ và GreenMail gom theo hộp thư, không theo thời gian. */

@@ -79,7 +79,7 @@ Lỗi dữ liệu đầu vào có thêm `errors`, với key là tên field:
 Khi xử lý lỗi cần lưu ý:
 
 - **Có thể không có body.** Thiếu token, token hỏng (401) và thiếu quyền (403) do lớp bảo mật trả về với body rỗng. Luôn kiểm tra trước khi parse JSON.
-- **Chưa có mã lỗi riêng.** Hãy rẽ nhánh theo HTTP status và endpoint. Trường hợp duy nhất buộc phải so sánh `detail` là login trả 403 ([mục 5](#post-apiauthlogin)).
+- **Hầu hết lỗi chưa có mã riêng.** Hãy rẽ nhánh theo HTTP status và endpoint. Riêng 403 khi đăng nhập và refresh có thêm trường `code` để phân biệt `EMAIL_NOT_VERIFIED` với `ACCOUNT_LOCKED` ([mục 5](#post-apiauthlogin)). Không so sánh chuỗi `detail`.
 - **Nội dung `errors` có thể là tiếng Anh.** Hãy tự kiểm tra và tự viết thông báo ở client, chỉ dùng `errors` để biết field nào sai.
 
 | Status | Ý nghĩa | Client nên làm |
@@ -161,6 +161,7 @@ API và token giống hệt nhau. Điểm khác nằm ở cách client dùng:
 | Hiệu lực mã OTP | 10 phút | 400, phải yêu cầu mã mới |
 | Chờ giữa hai lần gửi mã | 60 giây | 429 có header `Retry-After` (giây). Nên hiện đếm ngược |
 | Nhập sai OTP | 5 lần cho mỗi mã | 429, phải yêu cầu mã mới |
+| Nhập sai OTP đăng ký hoặc đặt lại mật khẩu | 10 lần liên tiếp theo email, tính gộp mọi mã | 429 trong 15 phút, **không có** `Retry-After`. Nhập đúng cũng bị từ chối, xin mã mới không mở khoá |
 | Sai mật khẩu | 10 lần liên tiếp theo email | 429 trong 15 phút, **không có** `Retry-After`. Nhập đúng cũng bị từ chối |
 | Số bản ghi mỗi trang | Tối đa 100 | Tự giảm về 100 |
 
@@ -183,7 +184,7 @@ Các API này không cần token, và chỉ nhận `POST`.
 | `POST /api/auth/forgot-password` | Gửi OTP đặt lại mật khẩu | 202 |
 | `POST /api/auth/reset-password` | Đặt lại mật khẩu bằng OTP | 204 |
 
-**Luồng đăng ký:** `register` → màn nhập OTP → `verify-email` → `login`. Xác thực xong backend không tự đăng nhập.
+**Luồng đăng ký:** `register` → màn nhập OTP → `verify-email` → `login`. Xác thực xong backend không tự đăng nhập. Tài khoản chỉ được lưu vào bảng `users` khi nhập đúng OTP. Trước đó đăng nhập trả 401 như email chưa tồn tại.
 
 **Luồng đăng nhập có xác nhận 2 lớp:** `login` trả 202 kèm `ticket` → màn nhập OTP → `login/2fa` trả token. Tài khoản chưa bật thì `login` trả 200 như cũ.
 
@@ -205,7 +206,7 @@ Mail được gửi bất đồng bộ. Response 202 chỉ có nghĩa là yêu c
 | 409 | Email đã có tài khoản đã xác thực hoặc bị khoá | Gợi ý đăng nhập hoặc quên mật khẩu |
 | 429 | Email đang chờ xác thực và mã còn hiệu lực. `Retry-After` là số giây tới khi mã hết hạn (tối đa 10 phút) | Chuyển sang màn nhập OTP. Mật khẩu vừa nhập **không** được lưu |
 
-Nếu email chưa xác thực và mã đã hết hạn, đăng ký lại sẽ ghi đè mật khẩu và họ tên, rồi gửi mã mới.
+Nếu email chưa xác thực và mã đã hết hạn, đăng ký lại sẽ ghi đè mật khẩu và họ tên, rồi gửi mã mới. Thông tin đăng ký chờ xác thực hết hạn cùng mã, quá hạn thì `resend-code` không gửi mail nữa mà phải đăng ký lại.
 
 ### `POST /api/auth/verify-email`
 
@@ -217,9 +218,9 @@ Thành công: 204.
 
 | Lỗi | Khi nào |
 |---|---|
-| 400 | Mã sai, hết hạn hoặc không tồn tại |
+| 400 | Mã sai, hết hạn hoặc không tồn tại, hoặc thông tin đăng ký đã mất (phải đăng ký lại) |
 | 409 | Request gửi trùng cùng lúc (chặn nút bấm khi đang gửi) |
-| 429 | Sai quá 5 lần, phải yêu cầu mã mới |
+| 429 | Sai quá 5 lần, phải yêu cầu mã mới; hoặc sai 10 lần theo email, phải chờ 15 phút |
 
 ### `POST /api/auth/resend-code`
 
@@ -263,11 +264,11 @@ Tài khoản đã bật xác nhận 2 lớp: mật khẩu đúng trả **202, ch
 |---|---|---|
 | 400 | Dữ liệu sai | Hiển thị theo field |
 | 401 | Email hoặc mật khẩu không đúng | Hiển thị đúng thông báo này, không phân biệt email hay mật khẩu sai |
-| 403 | `Email chưa được xác thực` | Chuyển sang màn OTP, gọi `resend-code` nếu cần |
-| 403 | `Tài khoản đã bị khoá` | Báo liên hệ quản trị viên |
+| 403 | `Email chưa được xác thực`, kèm `"code": "EMAIL_NOT_VERIFIED"`. Chỉ còn gặp ở tài khoản tạo trước khi đổi luồng đăng ký | Chuyển sang màn OTP, gọi `resend-code` nếu cần |
+| 403 | `Tài khoản đã bị khoá`, kèm `"code": "ACCOUNT_LOCKED"` | Báo liên hệ quản trị viên |
 | 429 | Nhập sai quá nhiều lần | Báo thử lại sau 15 phút |
 
-Hai trường hợp 403 hiện chỉ phân biệt được bằng chuỗi `detail`.
+Hãy phân biệt hai trường hợp 403 bằng trường `code`, không so sánh `detail`.
 
 ### `POST /api/auth/login/2fa`
 
@@ -293,7 +294,7 @@ Nhập sai mã được tính chung vào bộ đếm sai mật khẩu ([mục 4]
 { "ticket": "<ticket>" }
 ```
 
-Thành công: 202, ticket giữ nguyên và mã cũ mất hiệu lực. Lỗi: 400 (phiên hết hạn, về màn đăng nhập), 429 có `Retry-After`.
+Thành công: 202, ticket giữ nguyên và mã cũ mất hiệu lực. Lỗi: 400 (phiên hết hạn, về màn đăng nhập), 403 (tài khoản vừa bị khoá), 429 có `Retry-After`.
 
 ### `POST /api/auth/refresh`
 
@@ -323,7 +324,7 @@ Trả 202 kể cả khi email không tồn tại, chưa xác thực hoặc bị 
 { "email": "an@example.com", "code": "012345", "newPassword": "MatKhauMoi@456" }
 ```
 
-Thành công: 204, mọi thiết bị bị đăng xuất. Lỗi: 400 (mã hoặc mật khẩu không hợp lệ), 409 (request trùng), 429 (sai mã quá 5 lần).
+Thành công: 204, mọi thiết bị bị đăng xuất. Lỗi: 400 (mã hoặc mật khẩu không hợp lệ), 409 (request trùng), 429 (sai quá 5 lần cho mỗi mã, hoặc 10 lần theo email trong [mục 4](#4-giới-hạn-và-thời-hạn)).
 
 ## 6. Hồ sơ cá nhân: `/api/me`
 
@@ -738,3 +739,16 @@ Web và mobile làm theo cùng thứ tự, vì các bước sau phụ thuộc v�
 5. **Hồ sơ cá nhân:** đổi tên, đổi mật khẩu, đổi email, hoạt động gần đây ([mục 6](#6-hồ-sơ-cá-nhân-apime)). Nhớ đăng nhập lại sau khi đổi mật khẩu hoặc email.
 6. **Thông báo:** biểu tượng chuông với số chưa đọc, màn danh sách ([mục 9](#9-thông-báo)).
 7. **Trang quản trị (thường chỉ trên web):** người dùng, vai trò, gửi thông báo ([mục 7](#7-quản-lý-người-dùng-apiadminusers), [mục 8](#8-vai-trò-và-quyền-apiadmin), [mục 9](#post-apiadminnotifications)).
+
+## Banner Trang chủ: `/api/content/banners`
+
+Ảnh và danh sách lưu trên S3 hoặc MinIO, bật bằng `S3_ENABLED=true`. Chưa bật thì danh sách rỗng và app dùng ảnh có sẵn.
+
+| Endpoint | Quyền | Chức năng |
+|---|---|---|
+| `GET /api/content/banners` | Công khai | Danh sách theo `position` |
+| `GET /api/content/banners/{id}/image` | Công khai | Ảnh, cache 1 giờ |
+| `POST /api/content/banners` | `ADMIN` | Thêm, `multipart/form-data`: `image`, `title`, `subtitle`, `linkPath`, `position` |
+| `DELETE /api/content/banners/{id}` | `ADMIN` | Xoá |
+
+`image` là JPEG, PNG hoặc WebP, tối đa 5 MB. `linkPath` chỉ nhận màn trong app, bắt đầu bằng `/p/`. Lỗi: 400 dữ liệu sai, 403 thiếu quyền, 404 không có banner, 503 chưa bật lưu trữ.

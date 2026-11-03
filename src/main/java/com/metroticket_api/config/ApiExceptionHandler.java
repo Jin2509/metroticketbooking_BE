@@ -28,7 +28,11 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(AuthException.class)
     public ProblemDetail handleAuth(AuthException e) {
-        return ProblemDetail.forStatusAndDetail(e.getStatus(), e.getMessage());
+        ProblemDetail body = ProblemDetail.forStatusAndDetail(e.getStatus(), e.getMessage());
+        if (e.getCode() != null) {
+            body.setProperty("code", e.getCode());
+        }
+        return body;
     }
 
     @ExceptionHandler(ResendTooSoonException.class)

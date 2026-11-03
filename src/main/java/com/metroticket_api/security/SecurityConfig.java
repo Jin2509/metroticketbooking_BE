@@ -53,6 +53,7 @@ public class SecurityConfig {
                 .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                 .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                 .requestMatchers(HttpMethod.POST, AUTH_PATH + "**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/content/banners", "/api/content/banners/*/image").permitAll()
                 .requestMatchers("/api/**").authenticated()
                 .anyRequest().denyAll())
             .oauth2ResourceServer(o -> o

@@ -7,10 +7,17 @@ import com.metroticket_api.verification.VerificationResult;
 public class AuthException extends RuntimeException {
 
     private final HttpStatus status;
+    /** Mã lỗi cho client rẽ nhánh, null nếu HTTP status và endpoint đã đủ để phân biệt. */
+    private final String code;
 
     public AuthException(HttpStatus status, String message) {
+        this(status, message, null);
+    }
+
+    public AuthException(HttpStatus status, String message, String code) {
         super(message);
         this.status = status;
+        this.code = code;
     }
 
     /** Đổi kết quả kiểm tra mã OTP (khác SUCCESS) thành lỗi trả cho client. */
@@ -25,5 +32,9 @@ public class AuthException extends RuntimeException {
 
     public HttpStatus getStatus() {
         return status;
+    }
+
+    public String getCode() {
+        return code;
     }
 }
