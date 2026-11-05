@@ -25,12 +25,12 @@ public interface NotificationRepository extends JpaRepository<Notification, UUID
     int markAllRead(UUID userId, Instant now);
 
     /** Gửi cho mọi tài khoản đang hoạt động trong một câu lệnh, không nạp toàn bộ user vào bộ nhớ. */
-    @Modifying
-    @Query(nativeQuery = true, value = """
-            insert into notification (id, user_id, type, title, body, created_at)
-            select gen_random_uuid(), u.id, :type, :title, :body, :now
-            from app_user u where u.status = 'ACTIVE'
-            """)
+        @Modifying
+        @Query(nativeQuery = true, value = """
+                insert into notification (id, user_id, type, title, body, created_at)
+                select gen_random_uuid(), u.id, :type, :title, :body, :now
+                from app_user u where u.status = 'ACTIVE'
+                """)
     int insertForAllActiveUsers(String type, String title, String body, Instant now);
 
     @Modifying

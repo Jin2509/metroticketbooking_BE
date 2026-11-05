@@ -52,6 +52,7 @@ public class SecurityConfig {
                 // Trang lỗi nội bộ của Tomcat: nếu chặn, mọi lỗi đi qua /error sẽ biến thành 401/403
                 .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                 .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**", "/webjars/**").permitAll()
                 .requestMatchers(HttpMethod.POST, AUTH_PATH + "**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/content/banners", "/api/content/banners/*/image").permitAll()
                 .requestMatchers("/api/**").authenticated()
