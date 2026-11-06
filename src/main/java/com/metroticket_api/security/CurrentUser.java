@@ -18,4 +18,9 @@ public final class CurrentUser {
         }
         return UUID.fromString(auth.getName());
     }
+
+    public static boolean hasAuthority(String authority) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream().anyMatch(a -> authority.equals(a.getAuthority()));
+    }
 }

@@ -14,6 +14,14 @@ public interface EmailVerificationChallengeRepository extends JpaRepository<Emai
     Optional<EmailVerificationChallenge> findFirstByEmailAndPurposeAndConsumedAtIsNullOrderByCreatedAtDesc(
             String email, VerificationPurpose purpose);
 
+    /** Mã mới nhất chưa dùng mà user này yêu cầu (bất kể gửi tới email nào). */
+    Optional<EmailVerificationChallenge> findFirstByRequestedByAndPurposeAndConsumedAtIsNullOrderByCreatedAtDesc(
+            UUID requestedBy, VerificationPurpose purpose);
+
+    /** Mã đăng nhập 2 lớp còn hoạt động của một ticket. */
+    Optional<EmailVerificationChallenge> findFirstByLoginTicketHashAndPurposeAndConsumedAtIsNull(
+            String loginTicketHash, VerificationPurpose purpose);
+
     /** Vô hiệu các mã cũ khi cấp mã mới, để chỉ mã mới nhất còn dùng được. */
     @Modifying
     @Query("""
@@ -21,6 +29,14 @@ public interface EmailVerificationChallengeRepository extends JpaRepository<Emai
             where c.email = :email and c.purpose = :purpose and c.consumedAt is null
             """)
     int invalidateActive(String email, VerificationPurpose purpose, Instant now);
+
+    /** Mỗi user chỉ có một yêu cầu còn hiệu lực cho mỗi mục đích. */
+    @Modifying
+    @Query("""
+            update EmailVerificationChallenge c set c.consumedAt = :now
+            where c.requestedBy = :requestedBy and c.purpose = :purpose and c.consumedAt is null
+            """)
+    int invalidateActiveOfRequester(UUID requestedBy, VerificationPurpose purpose, Instant now);
 
     /** Dọn rác định kỳ. */
     @Modifying

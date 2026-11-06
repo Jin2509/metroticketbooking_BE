@@ -55,7 +55,7 @@ public class JwtConfig {
 
     private static OAuth2TokenValidator<Jwt> notRevoked(AccessTokenDenylist denylist) {
         OAuth2Error revoked = new OAuth2Error(OAuth2ErrorCodes.INVALID_TOKEN, "Token đã bị thu hồi", null);
-        return jwt -> denylist.isRevoked(jwt.getId())
+        return jwt -> denylist.isRevoked(jwt)
                 ? OAuth2TokenValidatorResult.failure(revoked)
                 : OAuth2TokenValidatorResult.success();
     }

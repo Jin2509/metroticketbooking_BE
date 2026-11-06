@@ -1,0 +1,49 @@
+{
+  "users": [
+    {
+      "email": "admin.demo@metroticket.test",
+      "password": "Demo@12345",
+      "fullName": "Quản trị Demo",
+      "roles": [
+        "ADMIN"
+      ],
+      "status": "ACTIVE"
+    },
+    {
+      "email": "staff.demo@metroticket.test",
+      "password": "Demo@12345",
+      "fullName": "Nhân viên Demo",
+      "roles": [
+        "STAFF"
+      ],
+      "status": "ACTIVE"
+    },
+    {
+      "email": "passenger.demo@metroticket.test",
+      "password": "Demo@12345",
+      "fullName": "Hành khách Demo",
+      "roles": [
+        "PASSENGER"
+      ],
+      "status": "ACTIVE"
+    },
+    {
+      "email": "pending.demo@metroticket.test",
+      "password": "Demo@12345",
+      "fullName": "Chưa xác thực Demo",
+      "roles": [
+        "PASSENGER"
+      ],
+      "status": "PENDING_VERIFICATION"
+    },
+    {
+      "email": "locked.demo@metroticket.test",
+      "password": "Demo@12345",
+      "fullName": "Bị khoá Demo",
+      "roles": [
+        "PASSENGER"
+      ],
+      "status": "LOCKED"
+    }
+  ]
+}

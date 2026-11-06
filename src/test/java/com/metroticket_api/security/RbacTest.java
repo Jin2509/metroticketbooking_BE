@@ -119,6 +119,21 @@ class RbacTest {
                 .andExpect(status().isBadRequest());
     }
 
+    @Test
+    void metroWriteEndpointsRequireStationManage() throws Exception {
+        String body = "{\"code\":\"RBAC-L1\",\"nameLine\":\"Tuyến RBAC\"}";
+        mvc.perform(post("/api/v1/lines").with(as("PASSENGER")).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/lines").with(as("STAFF")).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/lines").with(as("PASSENGER"))).andExpect(status().isOk());
+        mvc.perform(post("/api/v1/lines").with(as("ADMIN")).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated());
+        mvc.perform(post("/api/v1/lines").with(as("ADMIN")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\":\"RBAC-L2\",\"nameLine\":\"x\",\"colorHex\":\"red\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
     /** Lưới an toàn: quên @PreAuthorize ở endpoint admin thì test fail. */
     @Test
     void everyAdminEndpointRequiresAPermission() {

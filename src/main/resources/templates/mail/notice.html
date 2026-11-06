@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{mail/layout :: page(~{::content})}">
+  <body>
+    <div th:fragment="content">
+      <p style="margin: 0 0 16px">
+        <span th:text="${greeting}">Xin chào,</span>
+      </p>
+      <p style="margin: 0 0 20px" th:text="${body}">Nội dung thông báo.</p>
+
+      <table th:if="${!details.isEmpty()}" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+             style="margin: 0 0 20px; border: 1px solid #e4e8ee">
+        <tr th:each="detail : ${details}">
+          <td width="40%" style="background-color: #f5f7fa; border-bottom: 1px solid #e4e8ee; padding: 10px 14px; font-size: 13px; color: #52606d"
+              th:text="${detail.label}">Nhãn</td>
+          <td style="border-bottom: 1px solid #e4e8ee; padding: 10px 14px; font-size: 14px; font-weight: bold; word-break: break-all"
+              th:text="${detail.value}">Giá trị</td>
+        </tr>
+      </table>
+
+      <table th:if="${warning != null}" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="background-color: #fff8e6; border-left: 4px solid #f2a900; padding: 12px 16px; font-size: 14px; line-height: 1.5; color: #513c06"
+              th:text="${warning}">Cảnh báo</td>
+        </tr>
+      </table>
+    </div>
+  </body>
+</html>

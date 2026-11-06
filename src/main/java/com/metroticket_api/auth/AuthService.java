@@ -3,7 +3,6 @@ package com.metroticket_api.auth;
 import java.time.Clock;
 import java.util.Locale;
 
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -11,8 +10,15 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import com.metroticket_api.auth.AuthDtos.LoginResponse;
 import com.metroticket_api.auth.AuthDtos.TokenResponse;
+import com.metroticket_api.auth.AuthDtos.TwoFactorChallengeResponse;
+import com.metroticket_api.auth.PendingRegistrationStore.PendingRegistration;
+import com.metroticket_api.notification.NotificationService;
+import com.metroticket_api.notification.NotificationType;
 import com.metroticket_api.rbac.RoleCodes;
 import com.metroticket_api.rbac.RoleRepository;
 import com.metroticket_api.security.AccessTokenDenylist;
@@ -20,6 +26,8 @@ import com.metroticket_api.security.TokenService;
 import com.metroticket_api.user.User;
 import com.metroticket_api.user.UserRepository;
 import com.metroticket_api.user.UserStatus;
+import com.metroticket_api.verification.EmailVerificationChallenge;
+import com.metroticket_api.verification.ResendTooSoonException;
 import com.metroticket_api.verification.VerificationCodeService;
 import com.metroticket_api.verification.VerificationPurpose;
 import com.metroticket_api.verification.VerificationResult;
@@ -28,99 +36,190 @@ import com.metroticket_api.verification.VerificationResult;
 public class AuthService {
 
     private static final String BAD_CREDENTIALS = "Email hoặc mật khẩu không đúng";
+    private static final String LOGIN_TICKET_EXPIRED = "Phiên xác nhận đã hết hạn, vui lòng đăng nhập lại";
 
     private final UserRepository users;
     private final RoleRepository roles;
     private final PasswordEncoder passwordEncoder;
     private final VerificationCodeService verification;
+    private final PendingRegistrationStore pendingRegistrations;
     private final TokenService tokens;
     private final RefreshTokenService refreshTokens;
     private final AccessTokenDenylist denylist;
+    private final LoginAttemptLimiter loginAttempts;
+    private final AuthEventService authEvents;
+    private final NotificationService notifications;
     private final JwtDecoder jwtDecoder;
     private final Clock clock;
     /** Hash giả để email không tồn tại vẫn tốn thời gian BCrypt như email có thật (chống dò tài khoản). */
     private final String dummyHash;
 
     public AuthService(UserRepository users, RoleRepository roles, PasswordEncoder passwordEncoder,
-            VerificationCodeService verification, TokenService tokens, RefreshTokenService refreshTokens,
-            AccessTokenDenylist denylist, JwtDecoder jwtDecoder, Clock clock) {
+            VerificationCodeService verification, PendingRegistrationStore pendingRegistrations, TokenService tokens, RefreshTokenService refreshTokens,
+            AccessTokenDenylist denylist, LoginAttemptLimiter loginAttempts, AuthEventService authEvents,
+            NotificationService notifications, JwtDecoder jwtDecoder, Clock clock) {
         this.users = users;
         this.roles = roles;
         this.passwordEncoder = passwordEncoder;
         this.verification = verification;
+        this.pendingRegistrations = pendingRegistrations;
         this.tokens = tokens;
         this.refreshTokens = refreshTokens;
         this.denylist = denylist;
+        this.loginAttempts = loginAttempts;
+        this.authEvents = authEvents;
+        this.notifications = notifications;
         this.jwtDecoder = jwtDecoder;
         this.clock = clock;
         this.dummyHash = passwordEncoder.encode("metroticket-dummy-password");
     }
 
     /**
-     * Đăng ký: tạo user PENDING_VERIFICATION với vai trò mặc định và gửi mã qua email.
-     * Nếu email đã đăng ký nhưng chưa xác thực (vd. mất mail), cho đăng ký lại: cập nhật
-     * mật khẩu/họ tên và gửi mã mới. Người khác không chiếm được vì không có mã trong email.
+     * Đăng ký: giữ thông tin ở PendingRegistrationStore và gửi mã qua email, bảng users chỉ có
+     * tài khoản sau khi xác nhận mã (xem verifyEmail).
+     * Mã đã hết hạn thì cho đăng ký lại: ghi đè mật khẩu/họ tên và gửi mã mới. Khi mã còn hiệu
+     * lực thì từ chối: nếu không, kẻ khác có thể ghi đè mật khẩu của người đang chờ xác thực, rồi
+     * chính người đó kích hoạt tài khoản bằng mã mới nhận được. Mất mail thì dùng /resend-code
+     * (giữ nguyên mật khẩu).
+     * Hàng PENDING_VERIFICATION tạo từ trước khi đổi luồng vẫn được xử lý như cũ.
      */
     @Transactional
     public void register(String rawEmail, String password, String fullName) {
         String email = normalize(rawEmail);
         User existing = users.findByEmail(email).orElse(null);
-        if (existing != null) {
-            if (existing.getStatus() != UserStatus.PENDING_VERIFICATION) {
-                throw new AuthException(HttpStatus.CONFLICT, "Email đã được sử dụng");
-            }
-            existing.updatePendingRegistration(passwordEncoder.encode(password), fullName.trim());
-            verification.issue(email, VerificationPurpose.REGISTER);
-            return;
-        }
-        User user = new User(email, passwordEncoder.encode(password), fullName.trim(),
-                UserStatus.PENDING_VERIFICATION, clock.instant());
-        user.assignRole(roles.findByCode(RoleCodes.DEFAULT)
-                .orElseThrow(() -> new IllegalStateException("Thiếu vai trò mặc định " + RoleCodes.DEFAULT)));
-        try {
-            // flush ngay để bắt vi phạm unique khi 2 request đăng ký cùng email chạy song song
-            users.saveAndFlush(user);
-        } catch (DataIntegrityViolationException e) {
+        if (existing != null && existing.getStatus() != UserStatus.PENDING_VERIFICATION) {
             throw new AuthException(HttpStatus.CONFLICT, "Email đã được sử dụng");
         }
+        verification.activeCodeRemaining(email, VerificationPurpose.REGISTER).ifPresent(remaining -> {
+            throw new ResendTooSoonException(remaining);
+        });
+        String passwordHash = passwordEncoder.encode(password);
         verification.issue(email, VerificationPurpose.REGISTER);
+        if (existing != null) {
+            existing.updatePendingRegistration(passwordHash, fullName.trim());
+        } else {
+            // Ghi sau cùng: Redis lỗi thì transaction rollback và mail không được gửi
+            pendingRegistrations.save(email, new PendingRegistration(passwordHash, fullName.trim()));
+        }
     }
 
     @Transactional
     public void resendRegisterCode(String rawEmail) {
         String email = normalize(rawEmail);
-        users.findByEmail(email)
-                .filter(u -> u.getStatus() == UserStatus.PENDING_VERIFICATION)
-                .ifPresent(u -> verification.issue(email, VerificationPurpose.REGISTER));
+        User existing = users.findByEmail(email).orElse(null);
+        if (existing != null) {
+            if (existing.getStatus() == UserStatus.PENDING_VERIFICATION) {
+                verification.issue(email, VerificationPurpose.REGISTER);
+            }
+            return;
+        }
+        // Mã mới có hạn mới nên phải ghi lại để gia hạn thông tin đăng ký theo mã.
         // Không báo "email không tồn tại" để tránh dò tài khoản
+        pendingRegistrations.find(email).ifPresent(pending -> {
+            verification.issue(email, VerificationPurpose.REGISTER);
+            pendingRegistrations.save(email, pending);
+        });
     }
 
     /**
+     * Mã đúng mới tạo tài khoản trong bảng users.
      * noRollbackFor: khi mã sai ta ném AuthException, nhưng vẫn phải commit
      * failed_attempts đã tăng; nếu rollback thì kẻ tấn công thử mã vô hạn lần.
      */
     @Transactional(noRollbackFor = AuthException.class)
     public void verifyEmail(String rawEmail, String code) {
         String email = normalize(rawEmail);
-        VerificationResult result = verification.verify(email, VerificationPurpose.REGISTER, code);
+        VerificationResult result = verifyCodeWithLimit(email, VerificationPurpose.REGISTER, code);
         if (result != VerificationResult.SUCCESS) {
-            throw toException(result);
+            throw AuthException.of(result);
         }
-        users.findByEmail(email).ifPresent(User::activate);
+        User existing = users.findByEmail(email).orElse(null);
+        if (existing == null) {
+            welcome(createVerifiedUser(email));
+        } else if (existing.getStatus() == UserStatus.PENDING_VERIFICATION) {
+            existing.activate(clock.instant());
+            welcome(existing);
+        }
     }
 
-    @Transactional
-    public TokenResponse login(String rawEmail, String password) {
-        User user = users.findWithRolesByEmail(normalize(rawEmail)).orElse(null);
+    private User createVerifiedUser(String email) {
+        PendingRegistration pending = pendingRegistrations.find(email)
+                .orElseThrow(() -> new AuthException(HttpStatus.BAD_REQUEST,
+                        "Yêu cầu đăng ký đã hết hạn, vui lòng đăng ký lại"));
+        User user = new User(email, pending.passwordHash(), pending.fullName(),
+                UserStatus.PENDING_VERIFICATION, clock.instant());
+        user.assignRole(roles.findByCode(RoleCodes.DEFAULT)
+                .orElseThrow(() -> new IllegalStateException("Thiếu vai trò mặc định " + RoleCodes.DEFAULT)));
+        user.activate(clock.instant());
+        // Hai request xác nhận song song: vi phạm unique → ApiExceptionHandler trả 409 và rollback
+        User saved = users.saveAndFlush(user);
+        // Chỉ xoá sau commit: rollback thì người dùng vẫn xác nhận lại được
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                pendingRegistrations.delete(email);
+            }
+        });
+        return saved;
+    }
+
+    private void welcome(User user) {
+        authEvents.record(user.getId(), AuthEventType.EMAIL_VERIFIED);
+        notifications.notifyWithEmail(user, NotificationType.SYSTEM, "Chào mừng đến với MetroTicket",
+                "Tài khoản của bạn đã được kích hoạt.");
+    }
+
+    /** noRollbackFor: lần đăng nhập sai vẫn phải được ghi vào lịch sử dù ta ném AuthException. */
+    @Transactional(noRollbackFor = AuthException.class)
+    public LoginResponse login(String rawEmail, String password) {
+        String email = normalize(rawEmail);
+        loginAttempts.ensureNotLocked(email);
+        User user = users.findWithRolesByEmail(email).orElse(null);
         if (user == null) {
             passwordEncoder.matches(password, dummyHash);
+            loginAttempts.recordFailure(email);
             throw new AuthException(HttpStatus.UNAUTHORIZED, BAD_CREDENTIALS);
         }
         if (!passwordEncoder.matches(password, user.getPasswordHash())) {
+            loginAttempts.recordFailure(email);
+            authEvents.record(user.getId(), AuthEventType.LOGIN_FAILED);
             throw new AuthException(HttpStatus.UNAUTHORIZED, BAD_CREDENTIALS);
         }
+        if (user.isTwoFactorEnabled() && user.getStatus() == UserStatus.ACTIVE) {
+            // Chưa xoá bộ đếm: nếu xoá ở đây thì đăng nhập lại là thử mã 2 lớp được vô hạn lần
+            VerificationCodeService.LoginChallenge challenge = verification.issueLogin(user.getId(), email);
+            return new TwoFactorChallengeResponse(true, challenge.ticket(), challenge.expiresAt());
+        }
+        loginAttempts.reset(email);
         ensureCanSignIn(user);
-        return issueTokens(user, refreshTokens.issue(user.getId()));
+        return completeLogin(user);
+    }
+
+    /** Bước 2 của đăng nhập. noRollbackFor: lần nhập sai mã vẫn phải được commit. */
+    @Transactional(noRollbackFor = AuthException.class)
+    public TokenResponse verifyLoginCode(String ticket, String code) {
+        EmailVerificationChallenge challenge = loadLoginChallenge(ticket);
+        String email = challenge.getEmail();
+        loginAttempts.ensureNotLocked(email);
+        User user = loadLoginUser(challenge);
+        VerificationResult result = verification.verifyLogin(challenge, code);
+        if (result == VerificationResult.INVALID_CODE || result == VerificationResult.TOO_MANY_ATTEMPTS) {
+            loginAttempts.recordFailure(email);
+            authEvents.record(user.getId(), AuthEventType.TWO_FACTOR_FAILED);
+        }
+        if (result != VerificationResult.SUCCESS) {
+            throw AuthException.of(result);
+        }
+        loginAttempts.reset(email);
+        ensureCanSignIn(user);
+        return completeLogin(user);
+    }
+
+    @Transactional
+    public void resendLoginCode(String ticket) {
+        EmailVerificationChallenge challenge = loadLoginChallenge(ticket);
+        ensureCanSignIn(loadLoginUser(challenge));
+        verification.reissueLogin(challenge, ticket);
     }
 
     /** Đổi refresh token lấy cặp token mới (refresh token cũ bị thu hồi). */
@@ -142,7 +241,7 @@ public class AuthService {
      */
     @Transactional
     public void logout(String refreshToken, String accessToken) {
-        refreshTokens.revoke(refreshToken);
+        refreshTokens.revoke(refreshToken).ifPresent(userId -> authEvents.record(userId, AuthEventType.LOGOUT));
         if (accessToken == null || accessToken.isBlank()) {
             return;
         }
@@ -166,14 +265,58 @@ public class AuthService {
     @Transactional(noRollbackFor = AuthException.class)
     public void resetPassword(String rawEmail, String code, String newPassword) {
         String email = normalize(rawEmail);
-        VerificationResult result = verification.verify(email, VerificationPurpose.RESET_PASSWORD, code);
+        VerificationResult result = verifyCodeWithLimit(email, VerificationPurpose.RESET_PASSWORD, code);
         if (result != VerificationResult.SUCCESS) {
-            throw toException(result);
+            throw AuthException.of(result);
         }
         users.findByEmail(email).ifPresent(u -> {
-            u.changePassword(passwordEncoder.encode(newPassword));
+            u.changePassword(passwordEncoder.encode(newPassword), clock.instant());
             refreshTokens.revokeAll(u.getId());
+            loginAttempts.reset(email);
+            authEvents.record(u.getId(), AuthEventType.PASSWORD_RESET);
+            notifications.notifyWithEmail(u, NotificationType.SECURITY, "Mật khẩu đã được đặt lại",
+                    "Mật khẩu của bạn vừa được đặt lại. Nếu không phải bạn, hãy liên hệ quản trị viên ngay.");
         });
+    }
+
+    /**
+     * Giới hạn 5 lần sai chỉ tính cho từng mã, mà mã mới xin được sau mỗi 60 giây, nên cần thêm bộ đếm
+     * theo email để không dò được mã bằng cách xin mã liên tục. Bộ đếm tách theo mục đích: kẻ khác cố tình
+     * nhập sai mật khẩu không chặn được người dùng lấy lại tài khoản bằng quên mật khẩu.
+     */
+    private VerificationResult verifyCodeWithLimit(String email, VerificationPurpose purpose, String code) {
+        String limitKey = purpose + ":" + email;
+        loginAttempts.ensureNotLocked(limitKey);
+        VerificationResult result = verification.verify(email, purpose, code);
+        if (result == VerificationResult.SUCCESS) {
+            loginAttempts.reset(limitKey);
+        } else if (result != VerificationResult.EXPIRED) {
+            loginAttempts.recordFailure(limitKey);
+        }
+        return result;
+    }
+
+    private EmailVerificationChallenge loadLoginChallenge(String ticket) {
+        return verification.findLogin(ticket)
+                .orElseThrow(() -> new AuthException(HttpStatus.BAD_REQUEST, LOGIN_TICKET_EXPIRED));
+    }
+
+    /** Mật khẩu hoặc email đã đổi sau bước 1 thì ticket không còn giá trị, phải đăng nhập lại. */
+    private User loadLoginUser(EmailVerificationChallenge challenge) {
+        User user = users.findWithRolesById(challenge.getRequestedBy())
+                .orElseThrow(() -> new AuthException(HttpStatus.BAD_REQUEST, LOGIN_TICKET_EXPIRED));
+        boolean passwordChanged = user.getPasswordChangedAt() != null
+                && user.getPasswordChangedAt().isAfter(challenge.getCreatedAt());
+        if (passwordChanged || !user.getEmail().equals(challenge.getEmail())) {
+            throw new AuthException(HttpStatus.BAD_REQUEST, LOGIN_TICKET_EXPIRED);
+        }
+        return user;
+    }
+
+    private TokenResponse completeLogin(User user) {
+        user.recordLogin(clock.instant());
+        authEvents.record(user.getId(), AuthEventType.LOGIN_SUCCESS);
+        return issueTokens(user, refreshTokens.issue(user.getId()));
     }
 
     private TokenResponse issueTokens(User user, RefreshTokenService.IssuedRefreshToken refresh) {
@@ -183,19 +326,10 @@ public class AuthService {
 
     private static void ensureCanSignIn(User user) {
         switch (user.getStatus()) {
-            case PENDING_VERIFICATION -> throw new AuthException(HttpStatus.FORBIDDEN, "Email chưa được xác thực");
-            case LOCKED -> throw new AuthException(HttpStatus.FORBIDDEN, "Tài khoản đã bị khoá");
+            case PENDING_VERIFICATION -> throw new AuthException(HttpStatus.FORBIDDEN, "Email chưa được xác thực", "EMAIL_NOT_VERIFIED");
+            case LOCKED -> throw new AuthException(HttpStatus.FORBIDDEN, "Tài khoản đã bị khoá", "ACCOUNT_LOCKED");
             case ACTIVE -> { }
         }
-    }
-
-    private static AuthException toException(VerificationResult result) {
-        return switch (result) {
-            case EXPIRED -> new AuthException(HttpStatus.BAD_REQUEST, "Mã đã hết hạn, vui lòng yêu cầu mã mới");
-            case TOO_MANY_ATTEMPTS -> new AuthException(HttpStatus.TOO_MANY_REQUESTS, "Nhập sai quá nhiều lần, vui lòng yêu cầu mã mới");
-            case INVALID_CODE, NOT_FOUND -> new AuthException(HttpStatus.BAD_REQUEST, "Mã xác thực không đúng");
-            case SUCCESS -> throw new IllegalArgumentException("SUCCESS không phải lỗi");
-        };
     }
 
     private static String normalize(String email) {

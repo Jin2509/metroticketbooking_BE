@@ -63,10 +63,10 @@ class AuthFlowIntegrationTest {
         assertThat(mail.getSubject()).contains("Mã xác thực");
         String code = extractCode(GreenMailUtil.getBody(mail));
 
-        // Chưa xác thực thì không đăng nhập được
+        // Chưa xác thực thì chưa có tài khoản nên không đăng nhập được
         mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content(loginJson(email)))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
 
         // Gửi lại ngay lập tức → 429 do cooldown
         mvc.perform(post("/api/auth/resend-code").contentType(MediaType.APPLICATION_JSON)
@@ -214,9 +214,8 @@ class AuthFlowIntegrationTest {
                         .content("{\"email\":\"khong-co@example.com\"}"))
                 .andExpect(status().isAccepted());
 
-        assertThat(greenMail.waitForIncomingEmail(5000, 2)).isTrue();
-        MimeMessage mail = greenMail.getReceivedMessages()[1];
-        assertThat(mail.getSubject()).contains("đặt lại mật khẩu");
+        // Sau xác thực còn có mail chào mừng gửi bất đồng bộ, nên tìm theo tiêu đề thay vì thứ tự
+        MimeMessage mail = awaitMailWithSubject("đặt lại mật khẩu");
         String code = extractCode(GreenMailUtil.getBody(mail));
 
         mvc.perform(post("/api/auth/reset-password").contentType(MediaType.APPLICATION_JSON)
@@ -250,6 +249,57 @@ class AuthFlowIntegrationTest {
         // Đã xác thực → đăng ký lại bị 409
         mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON).content(json))
                 .andExpect(status().isConflict());
+    }
+
+    /** Xin mã mới sau mỗi 60 giây không được làm mới số lần thử: bộ đếm theo email phải chặn lại. */
+    @Test
+    void guessingResetCodesIsLimitedAcrossCodesWithoutBlockingLogin() throws Exception {
+        String email = "hoa.le@example.com";
+        registerAndVerify(email, 0);
+        mvc.perform(post("/api/auth/forgot-password").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"%s\"}".formatted(email)))
+                .andExpect(status().isAccepted());
+        String code = extractCode(GreenMailUtil.getBody(awaitMailWithSubject("đặt lại mật khẩu")));
+        String wrongCode = "000000".equals(code) ? "000001" : "000000";
+
+        for (int i = 0; i < 10; i++) {
+            mvc.perform(post("/api/auth/reset-password").contentType(MediaType.APPLICATION_JSON)
+                    .content(resetJson(email, wrongCode)));
+        }
+        // Mã đúng cũng bị từ chối khi đang khoá, mật khẩu cũ vẫn còn dùng được
+        mvc.perform(post("/api/auth/reset-password").contentType(MediaType.APPLICATION_JSON)
+                        .content(resetJson(email, code)))
+                .andExpect(status().isTooManyRequests());
+        login(email, "MatKhau@123");
+    }
+
+    /** Email không tồn tại phải bị khoá y hệt, nếu không 429 sẽ làm lộ tài khoản có thật. */
+    @Test
+    void guessingCodesForUnknownEmailIsLimitedTheSameWay() throws Exception {
+        String json = resetJson("khong.ton.tai@example.com", "000000");
+        for (int i = 0; i < 10; i++) {
+            mvc.perform(post("/api/auth/reset-password").contentType(MediaType.APPLICATION_JSON).content(json))
+                    .andExpect(status().isBadRequest());
+        }
+        mvc.perform(post("/api/auth/reset-password").contentType(MediaType.APPLICATION_JSON).content(json))
+                .andExpect(status().isTooManyRequests());
+    }
+
+    private static String resetJson(String email, String code) {
+        return "{\"email\":\"%s\",\"code\":\"%s\",\"newPassword\":\"MatKhauMoi@456\"}".formatted(email, code);
+    }
+
+    private MimeMessage awaitMailWithSubject(String subject) throws Exception {
+        long deadline = System.currentTimeMillis() + 5000;
+        while (true) {
+            for (MimeMessage mail : greenMail.getReceivedMessages()) {
+                if (mail.getSubject().contains(subject)) {
+                    return mail;
+                }
+            }
+            assertThat(System.currentTimeMillis()).as("chờ mail '%s'", subject).isLessThan(deadline);
+            Thread.sleep(50);
+        }
     }
 
     private void registerAndVerify(String email, int mailIndex) throws Exception {

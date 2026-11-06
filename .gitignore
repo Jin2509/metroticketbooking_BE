@@ -1,8 +1,12 @@
 setupbackend/
 .env
+seed/demo-users.json
 
 target/
 .DS_Store
 .idea/
 .vscode/
 *.log
+
+# Tài liệu nội bộ (markdown) không đưa lên git
+*.md

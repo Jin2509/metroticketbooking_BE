@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -18,6 +19,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.metroticket_api.security.AccessTokenDenylist;
 import com.metroticket_api.security.JwtProps;
 
 /**
@@ -36,12 +38,17 @@ public class RefreshTokenService {
     private static final String INVALID = "Refresh token không hợp lệ hoặc đã hết hạn";
 
     private final RefreshTokenRepository repository;
+    private final AccessTokenDenylist denylist;
+    private final AuthEventService authEvents;
     private final JwtProps props;
     private final Clock clock;
     private final SecureRandom random = new SecureRandom();
 
-    public RefreshTokenService(RefreshTokenRepository repository, JwtProps props, Clock clock) {
+    public RefreshTokenService(RefreshTokenRepository repository, AccessTokenDenylist denylist,
+            AuthEventService authEvents, JwtProps props, Clock clock) {
         this.repository = repository;
+        this.denylist = denylist;
+        this.authEvents = authEvents;
         this.props = props;
         this.clock = clock;
     }
@@ -74,17 +81,22 @@ public class RefreshTokenService {
         return new Rotated(current.getUserId(), issue(current.getUserId(), current.getFamilyId(), now));
     }
 
-    /** Đăng xuất một phiên: thu hồi cả family của token. Token sai/không tồn tại thì bỏ qua. */
+    /**
+     * Đăng xuất một phiên: thu hồi cả family của token. Token sai/không tồn tại thì bỏ qua.
+     * Trả về chủ phiên nếu thật sự có phiên vừa bị thu hồi (đăng xuất lần 2 thì rỗng).
+     */
     @Transactional
-    public void revoke(String rawToken) {
-        repository.findByTokenHash(hash(rawToken))
-                .ifPresent(t -> repository.revokeFamily(t.getFamilyId(), clock.instant()));
+    public Optional<UUID> revoke(String rawToken) {
+        return repository.findByTokenHash(hash(rawToken))
+                .filter(t -> repository.revokeFamily(t.getFamilyId(), clock.instant()) > 0)
+                .map(RefreshToken::getUserId);
     }
 
-    /** Đăng xuất mọi thiết bị (đổi mật khẩu, bị khoá...). */
+    /** Đăng xuất mọi thiết bị (đổi mật khẩu, bị khoá...): thu hồi cả refresh token và access token. */
     @Transactional
     public void revokeAll(UUID userId) {
         repository.revokeAllOfUser(userId, clock.instant());
+        denylist.revokeAllOfUserAfterCommit(userId);
     }
 
     /** Xoá token hết hạn quá 1 ngày, chạy lúc 3h30 sáng mỗi ngày. */
@@ -97,6 +109,7 @@ public class RefreshTokenService {
     private void reuseDetected(RefreshToken token, Instant now) {
         log.warn("Refresh token bị dùng lại, thu hồi phiên của user {}", token.getUserId());
         repository.revokeFamily(token.getFamilyId(), now);
+        authEvents.record(token.getUserId(), AuthEventType.TOKEN_REUSE_DETECTED);
         throw new AuthException(HttpStatus.UNAUTHORIZED, INVALID);
     }
 

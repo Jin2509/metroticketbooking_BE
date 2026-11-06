@@ -2,6 +2,8 @@ package com.metroticket_api.security;
 
 import java.util.List;
 
+import jakarta.servlet.DispatcherType;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -47,8 +49,14 @@ public class SecurityConfig {
             .cors(Customizer.withDefaults())
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
+                // Trang lỗi nội bộ của Tomcat: nếu chặn, mọi lỗi đi qua /error sẽ biến thành 401/403
+                .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                 .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**", "/webjars/**").permitAll()
+                .requestMatchers("/ws/lines/**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/v1/public/lines/*/stations").permitAll()
                 .requestMatchers(HttpMethod.POST, AUTH_PATH + "**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/content/banners", "/api/content/banners/*/image").permitAll()
                 .requestMatchers("/api/**").authenticated()
                 .anyRequest().denyAll())
             .oauth2ResourceServer(o -> o
