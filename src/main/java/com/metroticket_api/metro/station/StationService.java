@@ -1,6 +1,7 @@
 package com.metroticket_api.metro.station;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -16,9 +17,12 @@ import org.springframework.web.server.ResponseStatusException;
 
 import com.metroticket_api.metro.common.StationStatus;
 import com.metroticket_api.metro.common.TransferStatus;
+import com.metroticket_api.metro.line.MetroLineDtos.LineResponse;
 import com.metroticket_api.metro.line.MetroLine;
 import com.metroticket_api.metro.line.MetroLineRepository;
+import com.metroticket_api.metro.station.LineTransferDtos.LineTransferResponse;
 import com.metroticket_api.metro.station.StationDtos.CreateStationRequest;
+import com.metroticket_api.metro.station.StationDtos.LineStationResponse;
 import com.metroticket_api.metro.station.StationDtos.StationOrderItem;
 import com.metroticket_api.metro.station.StationDtos.StationResponse;
 import com.metroticket_api.metro.station.StationDtos.UpdateStationRequest;
@@ -77,6 +81,14 @@ public class StationService {
             return stations.findAllByStatus(status, pageable).map(StationResponse::of);
         }
         return stations.findAll(pageable).map(StationResponse::of);
+    }
+
+    /**
+     * Lấy toàn bộ ga mà không phân trang cho các màn hình select, map và danh sách đầy đủ.
+     */
+    @Transactional(readOnly = true)
+    public List<StationResponse> listAll() {
+        return stations.findAll().stream().map(StationResponse::of).toList();
     }
 
     /**
@@ -175,19 +187,22 @@ public class StationService {
      * Liệt kê các kết nối chuyển tuyến của ga để người dùng có thể biết ga đó kết nối với tuyến nào.
      */
     @Transactional(readOnly = true)
-    public List<LineTransfer> connections(Long stationId) {
+    public List<LineTransferResponse> connections(Long stationId) {
         getById(stationId);
-        return lineTransfers.findByStationId(stationId);
+        return lineTransfers.findByStationId(stationId).stream()
+                .map(LineTransferResponse::of)
+                .toList();
     }
 
     /**
      * Lấy các tuyến đi qua một ga để phục vụ xem nhanh danh sách tuyến tại ga.
      */
     @Transactional(readOnly = true)
-    public List<MetroLine> linesByStation(Long stationId) {
+    public List<LineResponse> linesByStation(Long stationId) {
         getById(stationId);
         return lineStations.findByStationId(stationId).stream()
                 .map(LineStation::getLine)
+                .map(LineResponse::of)
                 .toList();
     }
 
@@ -196,7 +211,7 @@ public class StationService {
      * Với dữ liệu quy mô vừa phải, phép lọc trong bộ nhớ là đủ và cho phép rút gọn logic query.
      */
     @Transactional(readOnly = true)
-    public List<Station> nearest(BigDecimal lat, BigDecimal lng, double maxDistanceKm) {
+    public List<StationResponse> nearest(BigDecimal lat, BigDecimal lng, double maxDistanceKm) {
         return stations.findAll().stream()
                 .filter(station -> {
                     BigDecimal latDelta = station.getLatitude().subtract(lat).abs();
@@ -204,6 +219,7 @@ public class StationService {
                     double distance = Math.sqrt(Math.pow(latDelta.doubleValue(), 2) + Math.pow(lngDelta.doubleValue(), 2));
                     return distance <= maxDistanceKm;
                 })
+                .map(StationResponse::of)
                 .toList();
     }
 
@@ -212,7 +228,7 @@ public class StationService {
      * tránh trường hợp trùng số thứ tự hoặc thiếu station trên tuyến.
      */
     @Transactional
-    public List<LineStation> updateStationOrder(Long lineId, List<StationOrderItem> items) {
+    public List<LineStationResponse> updateStationOrder(Long lineId, List<StationOrderItem> items) {
         MetroLine line = lines.findById(lineId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy tuyến"));
         if (items == null || items.isEmpty()) {
@@ -258,37 +274,88 @@ public class StationService {
             lineStation.setStationOrder(item.stationOrder());
             result.add(lineStations.save(lineStation));
         }
-        return result;
+
+       refreshBirdDistances(lineId, null, null);
+       return lineStations.findByLineIdOrderByStationOrderAsc(lineId).stream()
+               .map(LineStationResponse::of)
+               .toList();
     }
 
     /**
-     * Thêm một ga vào tuyến tại vị trí cuối cùng. Nếu tuyến chưa có ga nào thì gán station_order = 1.
+     * Thêm một ga vào tuyến tại vị trí được chỉ định. Nếu không truyền stationOrder thì mặc định đặt cuối tuyến.
      */
     @Transactional
-    public LineStation addStationToLine(Long lineId, Long stationId, BigDecimal distanceFromPrevKm,
-            Integer travelTimeFromPrevSeconds, Integer dwellTimeSeconds) {
-        MetroLine line = lines.findById(lineId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy tuyến"));
-        Station station = getById(stationId);
+    public LineStationResponse addStationToLine(Long lineId, Long stationId, Integer stationOrder,
+           BigDecimal distanceFromPrevKm, Integer travelTimeFromPrevSeconds, Integer dwellTimeSeconds) {
+       MetroLine line = lines.findById(lineId)
+               .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy tuyến"));
+       Station station = getById(stationId);
 
-        if (lineStations.existsByLineIdAndStationId(lineId, stationId)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Ga đã tồn tại trong tuyến");
-        }
+       if (lineStations.existsByLineIdAndStationId(lineId, stationId)) {
+           throw new ResponseStatusException(HttpStatus.CONFLICT, "Ga đã tồn tại trong tuyến");
+       }
 
-        Integer nextOrder = lineStations.findByLineIdOrderByStationOrderAsc(lineId).stream()
-                .map(LineStation::getStationOrder)
-                .max(Integer::compareTo)
-                .map(order -> order + 1)
-                .orElse(1);
+       List<LineStation> ordered = lineStations.findByLineIdOrderByStationOrderAsc(lineId);
+       int nextOrder = ordered.isEmpty() ? 1 : ordered.stream().map(LineStation::getStationOrder).max(Integer::compareTo).orElse(0) + 1;
+       if (stationOrder != null) {
+           if (stationOrder <= 0) {
+               throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "stationOrder phải lớn hơn 0");
+           }
+           nextOrder = Math.min(stationOrder, ordered.size() + 1);
+           for (LineStation existing : ordered) {
+               if (existing.getStationOrder() >= nextOrder) {
+                   existing.setStationOrder(existing.getStationOrder() + 1);
+                   lineStations.save(existing);
+               }
+           }
+       }
 
-        LineStation lineStation = new LineStation(
-                line,
-                station,
-                nextOrder,
-                distanceFromPrevKm,
-                travelTimeFromPrevSeconds,
-                dwellTimeSeconds);
-        return lineStations.save(lineStation);
+       BigDecimal effectiveDistance = distanceFromPrevKm;
+       if (effectiveDistance == null) {
+           effectiveDistance = getBirdDistanceFromPreviousStation(lineId, stationId, nextOrder);
+       }
+
+       LineStation lineStation = new LineStation(
+               line,
+               station,
+               nextOrder,
+               effectiveDistance,
+               travelTimeFromPrevSeconds,
+               dwellTimeSeconds);
+       lineStations.save(lineStation);
+
+       refreshBirdDistances(lineId, lineStation.getStation().getId(), effectiveDistance);
+       LineStation savedLineStation = lineStations.findByLineIdOrderByStationOrderAsc(lineId).stream()
+               .filter(ls -> ls.getStation().getId().equals(stationId))
+               .findFirst()
+               .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ga vừa thêm không tìm thấy trong tuyến"));
+       return LineStationResponse.of(savedLineStation);
+    }
+
+    /**
+     * Cập nhật các thông số của đoạn đường từ ga trước đó đến ga này trong tuyến.
+     */
+    @Transactional
+    public LineStationResponse updateStationSegment(Long lineId, Long stationId, BigDecimal distanceFromPrevKm,
+           Integer travelTimeFromPrevSeconds, Integer dwellTimeSeconds) {
+       if (!lines.existsById(lineId)) {
+           throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy tuyến");
+       }
+       LineStation lineStation = lineStations.findByLineIdOrderByStationOrderAsc(lineId).stream()
+               .filter(ls -> ls.getStation().getId().equals(stationId))
+               .findFirst()
+               .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ga không thuộc tuyến"));
+
+       if (distanceFromPrevKm != null) {
+           lineStation.setDistanceFromPrevKm(distanceFromPrevKm);
+       }
+       if (travelTimeFromPrevSeconds != null) {
+           lineStation.setTravelTimeFromPrevSeconds(travelTimeFromPrevSeconds);
+       }
+       if (dwellTimeSeconds != null) {
+           lineStation.setDwellTimeSeconds(dwellTimeSeconds);
+       }
+       return LineStationResponse.of(lineStations.save(lineStation));
     }
 
     /**
@@ -296,16 +363,94 @@ public class StationService {
      */
     @Transactional
     public void removeStationFromLine(Long lineId, Long stationId) {
-        if (!lines.existsById(lineId)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy tuyến");
-        }
-        if (!stations.existsById(stationId)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy ga");
-        }
-        if (!lineStations.existsByLineIdAndStationId(lineId, stationId)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Ga không thuộc tuyến");
-        }
-        lineStations.deleteByLineIdAndStationId(lineId, stationId);
+       if (!lines.existsById(lineId)) {
+           throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy tuyến");
+       }
+       if (!stations.existsById(stationId)) {
+           throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy ga");
+       }
+       if (!lineStations.existsByLineIdAndStationId(lineId, stationId)) {
+           throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Ga không thuộc tuyến");
+       }
+
+       List<LineStation> ordered = lineStations.findByLineIdOrderByStationOrderAsc(lineId);
+       LineStation removed = ordered.stream()
+               .filter(ls -> ls.getStation().getId().equals(stationId))
+               .findFirst()
+               .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ga không thuộc tuyến"));
+
+       lineStations.delete(removed);
+
+       for (LineStation remaining : ordered) {
+           if (remaining.getStation().getId().equals(stationId)) {
+               continue;
+           }
+           if (remaining.getStationOrder() > removed.getStationOrder()) {
+               remaining.setStationOrder(remaining.getStationOrder() - 1);
+               lineStations.save(remaining);
+           }
+       }
+
+       refreshBirdDistances(lineId, null, null);
+    }
+
+    private BigDecimal getBirdDistanceFromPreviousStation(Long lineId, Long stationId, Integer targetOrder) {
+       List<LineStation> ordered = lineStations.findByLineIdOrderByStationOrderAsc(lineId);
+       if (ordered.isEmpty()) {
+           return BigDecimal.ZERO;
+       }
+
+       LineStation previous = ordered.stream()
+               .filter(ls -> ls.getStationOrder().equals(targetOrder - 1))
+               .findFirst()
+               .orElse(null);
+       if (previous == null) {
+           return BigDecimal.ZERO;
+       }
+       return calculateBirdDistanceKm(previous.getStation(), getById(stationId));
+    }
+
+    private void refreshBirdDistances(Long lineId, Long preserveStationId, BigDecimal preserveDistance) {
+       List<LineStation> ordered = lineStations.findByLineIdOrderByStationOrderAsc(lineId);
+       if (ordered.isEmpty()) {
+           return;
+       }
+
+       for (int i = 0; i < ordered.size(); i++) {
+           LineStation current = ordered.get(i);
+           if (i == 0) {
+               current.setDistanceFromPrevKm(BigDecimal.ZERO);
+           } else {
+               LineStation previous = ordered.get(i - 1);
+               if (preserveStationId != null && current.getStation().getId().equals(preserveStationId) && preserveDistance != null) {
+                   current.setDistanceFromPrevKm(preserveDistance);
+               } else {
+                   current.setDistanceFromPrevKm(calculateBirdDistanceKm(previous.getStation(), current.getStation()));
+               }
+           }
+           lineStations.save(current);
+       }
+    }
+
+    private BigDecimal calculateBirdDistanceKm(Station from, Station to) {
+       if (from == null || to == null) {
+           return BigDecimal.ZERO;
+       }
+       if (from.getLatitude() == null || from.getLongitude() == null || to.getLatitude() == null || to.getLongitude() == null) {
+           return BigDecimal.ZERO;
+       }
+
+       double lat1 = Math.toRadians(from.getLatitude().doubleValue());
+       double lat2 = Math.toRadians(to.getLatitude().doubleValue());
+       double deltaLat = Math.toRadians(to.getLatitude().doubleValue() - from.getLatitude().doubleValue());
+       double deltaLng = Math.toRadians(to.getLongitude().doubleValue() - from.getLongitude().doubleValue());
+
+       double a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2)
+               + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) * Math.sin(deltaLng / 2);
+       double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+       double distanceKm = 6371.0 * c;
+
+       return BigDecimal.valueOf(distanceKm).setScale(3, RoundingMode.HALF_UP);
     }
 
     /**

@@ -15,17 +15,23 @@ public record OsmFeature(
         String leisure,
         String tourism) {
 
-    @SuppressWarnings("unchecked")
-    public static OsmFeature fromMap(Map<String, Object> node) {
-        Map<String, Object> tags = (Map<String, Object>) node.getOrDefault("tags", Map.of());
-        String name = asString(tags.getOrDefault("name", "Unnamed"));
+    public static OsmFeature fromMap(Map<?, ?> node) {
+        Map<?, ?> tags = node.get("tags") instanceof Map<?, ?> values ? values : Map.of();
+        String name = asString(tags.containsKey("name") ? tags.get("name") : "Unnamed");
         String amenity = asString(tags.get("amenity"));
         String shop = asString(tags.get("shop"));
         String leisure = asString(tags.get("leisure"));
         String tourism = asString(tags.get("tourism"));
 
+        Map<?, ?> center = node.get("center") instanceof Map<?, ?> values ? values : Map.of();
         BigDecimal latitude = asBigDecimal(node.get("lat"));
         BigDecimal longitude = asBigDecimal(node.get("lon"));
+        if (latitude == null) {
+            latitude = asBigDecimal(center.get("lat"));
+        }
+        if (longitude == null) {
+            longitude = asBigDecimal(center.get("lon"));
+        }
 
         return new OsmFeature(
                 name,

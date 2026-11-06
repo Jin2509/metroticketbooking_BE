@@ -37,12 +37,45 @@ public class StationDtos {
 
     public record AddLineStationRequest(
             Long stationId,
+            Integer stationOrder,
+            BigDecimal distanceFromPrevKm,
+            Integer travelTimeFromPrevSeconds,
+            Integer dwellTimeSeconds) {
+    }
+
+    public record UpdateLineStationSegmentRequest(
             BigDecimal distanceFromPrevKm,
             Integer travelTimeFromPrevSeconds,
             Integer dwellTimeSeconds) {
     }
 
     public record UpdateStationOrderRequest(List<StationOrderItem> stations) {
+    }
+
+    public record LineStationResponse(
+            Long id,
+            Long lineId,
+            String lineCode,
+            String lineName,
+            StationResponse station,
+            Integer stationOrder,
+            BigDecimal distanceFromPrevKm,
+            Integer travelTimeFromPrevSeconds,
+            Integer dwellTimeSeconds,
+            Instant createdAt) {
+        public static LineStationResponse of(LineStation lineStation) {
+            return new LineStationResponse(
+                    lineStation.getId(),
+                    lineStation.getLine().getId(),
+                    lineStation.getLine().getCode(),
+                    lineStation.getLine().getNameLine(),
+                    StationResponse.of(lineStation.getStation()),
+                    lineStation.getStationOrder(),
+                    lineStation.getDistanceFromPrevKm(),
+                    lineStation.getTravelTimeFromPrevSeconds(),
+                    lineStation.getDwellTimeSeconds(),
+                    lineStation.getCreatedAt());
+        }
     }
 
     public record StationResponse(

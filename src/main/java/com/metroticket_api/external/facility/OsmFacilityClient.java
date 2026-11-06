@@ -7,12 +7,19 @@ import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Client gọi API OpenStreetMap/Overpass để tìm các tiện ích quanh ga.
@@ -21,13 +28,13 @@ import org.springframework.web.client.RestTemplate;
 public class OsmFacilityClient implements FacilityProvider {
 
     private static final Logger log = LoggerFactory.getLogger(OsmFacilityClient.class);
-    private static final int MAX_RETRIES = 2;
+    private static final int MAX_RETRIES = 1;
 
     private final RestTemplate restTemplate;
     private final String baseUrl;
     private final String interpreterPath;
 
-    public OsmFacilityClient(RestTemplate restTemplate,
+    public OsmFacilityClient(@Qualifier("osmRestTemplate") RestTemplate restTemplate,
             @Value("${app.external.osm.base-url:https://overpass-api.de}") String baseUrl,
             @Value("${app.external.osm.interpreter-path:/api/interpreter}") String interpreterPath) {
         this.restTemplate = restTemplate;
@@ -35,7 +42,6 @@ public class OsmFacilityClient implements FacilityProvider {
         this.interpreterPath = normalizePath(interpreterPath);
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public List<OsmFeature> getNearbyFacilities(BigDecimal lat, BigDecimal lng, int radiusMeters) {
         if (lat == null || lng == null) {
@@ -45,28 +51,35 @@ public class OsmFacilityClient implements FacilityProvider {
         String query = """
                 [out:json];
                 (
-                  node["amenity"~"^(restaurant|cafe|pharmacy|hospital|clinic|school|college|university|bank|atm)$"](around:%d,%s,%s);
-                  node["shop"~"^(supermarket|convenience|bakery|mall)$"](around:%d,%s,%s);
-                  node["leisure"~"^(park|garden)$"](around:%d,%s,%s);
+                  nwr["amenity"~"^(restaurant|cafe|food_court|fast_food|bar|pub|canteen|ice_cream|pharmacy|hospital|clinic|dentist|veterinary|doctors|school|college|university|kindergarten|library|bank|atm|bureau_de_change|bus_station|train_station|subway_station|subway_entrance|taxi|parking|fuel|bicycle_rental|car_rental|charging_station)$"](around:%d,%s,%s);
+                  nwr["shop"~"^(supermarket|convenience|bakery|mall|department_store|clothes|greengrocer|marketplace)$"](around:%d,%s,%s);
+                  nwr["leisure"~"^(park|garden|playground|pitch|stadium|sports_centre)$"](around:%d,%s,%s);
+                  nwr["tourism"~"^(museum|hotel|attraction|gallery|viewpoint)$"](around:%d,%s,%s);
                 );
                 out center;
-                """.formatted(radiusMeters, lat, lng, radiusMeters, lat, lng, radiusMeters, lat, lng);
+                """.formatted(radiusMeters, lat, lng, radiusMeters, lat, lng, radiusMeters, lat, lng,
+                radiusMeters, lat, lng);
 
         HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.TEXT_PLAIN);
-        HttpEntity<String> request = new HttpEntity<>(query, headers);
+        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+        headers.set("User-Agent", "MetroTicketBooking/0.0.1");
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("data", query);
+        HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(form, headers);
 
         for (int attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
             try {
-                Map<String, Object> response = restTemplate.postForObject(buildUrl(baseUrl, interpreterPath), request, Map.class);
-                if (response == null || response.get("elements") == null) {
-                    return List.of();
+                Object payload = restTemplate.postForObject(buildUrl(baseUrl, interpreterPath), request, Object.class);
+                if (!(payload instanceof Map<?, ?> response)
+                        || !(response.get("elements") instanceof List<?> elements)) {
+                    throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                            "OpenStreetMap trả về dữ liệu tiện ích không hợp lệ");
                 }
 
-                List<Map<String, Object>> elements = (List<Map<String, Object>>) response.get("elements");
                 List<OsmFeature> features = new ArrayList<>();
-                for (Map<String, Object> element : elements) {
-                    if (element.containsKey("tags") && element.get("tags") instanceof Map<?, ?>) {
+                for (Object value : elements) {
+                    if (value instanceof Map<?, ?> element && element.get("tags") instanceof Map<?, ?>) {
                         OsmFeature feature = OsmFeature.fromMap(element);
                         if (isValidFeature(feature)) {
                             features.add(feature);
@@ -74,15 +87,17 @@ public class OsmFacilityClient implements FacilityProvider {
                     }
                 }
                 return features;
-            } catch (Exception ex) {
+            } catch (RestClientException ex) {
                 log.warn("OSM facility provider call failed (attempt {}/{}): {}",
-                        attempt, MAX_RETRIES + 1, ex.getMessage());
+                        attempt, MAX_RETRIES + 1, ex.getMessage(), ex);
                 if (attempt > MAX_RETRIES) {
-                    return List.of();
+                    throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                            "Không thể lấy tiện ích từ OpenStreetMap", ex);
                 }
             }
         }
-        return List.of();
+        throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                "Không thể lấy tiện ích từ OpenStreetMap");
     }
 
     private boolean isValidFeature(OsmFeature feature) {

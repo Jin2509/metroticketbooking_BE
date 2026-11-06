@@ -29,7 +29,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
  */
 @RestController
 @RequestMapping("/api/v1")
-@Tag(name = "Operation Config", description = "Quản lý versioned operation config của tuyến Metro: DRAFT -> PENDING_APPROVAL -> APPROVED/REJECTED.")
+@Tag(name = "Operation Config", description = "Quản lý versioned operation config của tuyến Metro: DRAFT -> PENDING_APPROVAL -> APPROVED -> ACTIVE/INACTIVE.")
 public class OperationConfigController {
 
     private final OperationConfigService service;
@@ -39,12 +39,21 @@ public class OperationConfigController {
     }
 
     /**
+     * Lấy toàn bộ cấu hình vận hành trên hệ thống.
+     */
+    @Operation(summary = "Liệt kê tất cả operation config", description = "Trả về toàn bộ cấu hình vận hành trong hệ thống để dashboard hoặc filter nhanh.")
+    @GetMapping("/operation-configs")
+    public java.util.List<OperationConfigResponse> listAll() {
+       return service.listAll();
+    }
+
+    /**
      * Lấy lịch sử cấu hình vận hành của một tuyến để admin hoặc người vận hành xem lại các phiên bản cũ.
      */
     @Operation(summary = "Liệt kê lịch sử operation config theo tuyến", description = "Trả về danh sách phiên bản cấu hình của tuyến theo thời điểm hiệu lực giảm dần.")
     @GetMapping("/lines/{lineId}/operation-configs")
     public java.util.List<OperationConfigResponse> listByLine(@PathVariable Long lineId) {
-        return service.listByLine(lineId);
+       return service.listByLine(lineId);
     }
 
     /**
@@ -101,6 +110,18 @@ public class OperationConfigController {
     @PostMapping("/operation-configs/{id}/reject")
     public OperationConfigResponse reject(@PathVariable Long id, @RequestParam String reason) {
         return service.reject(id, reason);
+    }
+
+    @Operation(summary = "Kích hoạt operation config", description = "Đặt cấu hình được phê duyệt thành ACTIVE. Chỉ cho phép 1 cấu hình ACTIVE cho mỗi tuyến.")
+    @PostMapping("/operation-configs/{id}/activate")
+    public OperationConfigResponse activate(@PathVariable Long id) {
+        return service.activate(id);
+    }
+
+    @Operation(summary = "Hủy kích hoạt operation config", description = "Chuyển trạng thái ACTIVE -> INACTIVE hoặc APPROVED -> INACTIVE.")
+    @PostMapping("/operation-configs/{id}/deactivate")
+    public OperationConfigResponse deactivate(@PathVariable Long id) {
+        return service.deactivate(id);
     }
 
 }

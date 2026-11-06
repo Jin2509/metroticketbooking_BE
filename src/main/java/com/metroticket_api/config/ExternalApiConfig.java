@@ -1,7 +1,9 @@
 package com.metroticket_api.config;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
@@ -19,10 +21,20 @@ import org.springframework.web.client.RestTemplate;
 public class ExternalApiConfig {
 
     @Bean
+    @Primary
     public RestTemplate restTemplate() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(3000);
         factory.setReadTimeout(5000);
+        return new RestTemplate(factory);
+    }
+
+    @Bean
+    @Qualifier("osmRestTemplate")
+    public RestTemplate osmRestTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(3000);
+        factory.setReadTimeout(15000);
         return new RestTemplate(factory);
     }
 }

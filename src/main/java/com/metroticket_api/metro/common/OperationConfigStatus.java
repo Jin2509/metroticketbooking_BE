@@ -4,5 +4,7 @@ public enum OperationConfigStatus {
     DRAFT,
     PENDING_APPROVAL,
     APPROVED,
-    REJECTED
+    REJECTED,
+    ACTIVE,
+    INACTIVE
 }

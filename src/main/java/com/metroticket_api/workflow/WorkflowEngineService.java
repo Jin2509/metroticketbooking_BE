@@ -116,6 +116,17 @@ public class WorkflowEngineService {
                         Set.of(RoleCodes.ADMIN, RoleCodes.SYSTEM), "Phê duyệt"),
                 new WorkflowStep(OperationConfigStatus.PENDING_APPROVAL.name(), OperationConfigStatus.REJECTED.name(),
                         Set.of(RoleCodes.ADMIN, RoleCodes.SYSTEM), "Từ chối")));
+        steps.put(OperationConfigStatus.APPROVED.name(), List.of(
+                new WorkflowStep(OperationConfigStatus.APPROVED.name(), OperationConfigStatus.ACTIVE.name(),
+                        Set.of(RoleCodes.ADMIN, RoleCodes.SYSTEM), "Kích hoạt"),
+                new WorkflowStep(OperationConfigStatus.APPROVED.name(), OperationConfigStatus.INACTIVE.name(),
+                        Set.of(RoleCodes.ADMIN, RoleCodes.SYSTEM), "Đặt không hoạt động")));
+        steps.put(OperationConfigStatus.ACTIVE.name(), List.of(
+                new WorkflowStep(OperationConfigStatus.ACTIVE.name(), OperationConfigStatus.INACTIVE.name(),
+                        Set.of(RoleCodes.ADMIN, RoleCodes.SYSTEM), "Vô hiệu hóa")));
+        steps.put(OperationConfigStatus.INACTIVE.name(), List.of(
+                new WorkflowStep(OperationConfigStatus.INACTIVE.name(), OperationConfigStatus.ACTIVE.name(),
+                        Set.of(RoleCodes.ADMIN, RoleCodes.SYSTEM), "Kích hoạt lại")));
 
         definitions.put(WorkflowEntityType.OPERATION_CONFIG,
                 new WorkflowDefinition(WorkflowEntityType.OPERATION_CONFIG, "Operation config approval workflow", steps));

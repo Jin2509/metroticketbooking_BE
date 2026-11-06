@@ -66,10 +66,10 @@ public class FacilityService {
         if (amenity.matches("school|college|university|kindergarten|library")) {
             return FacilityCategory.EDUCATION;
         }
-        if (amenity.matches("bank|atm|bureau_de_change|fuel|parking")) {
+        if (amenity.matches("bank|atm|bureau_de_change")) {
             return FacilityCategory.BANK;
         }
-        if (amenity.matches("bus_station|train_station|subway_station|taxi|parking")) {
+        if (amenity.matches("bus_station|train_station|subway_station|subway_entrance|taxi|parking|fuel|bicycle_rental|car_rental|charging_station")) {
             return FacilityCategory.TRANSPORT;
         }
 
@@ -82,7 +82,7 @@ public class FacilityService {
         if (tourism.matches("museum|hotel|attraction|gallery|viewpoint")) {
             return FacilityCategory.ENTERTAINMENT;
         }
-        if (amenity.matches("marketplace")) {
+        if (shop.matches("marketplace")) {
             return FacilityCategory.SHOP;
         }
         return FacilityCategory.OTHER;

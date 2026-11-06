@@ -21,7 +21,8 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.metroticket_api.metro.common.StationStatus;
-import com.metroticket_api.metro.line.MetroLine;
+import com.metroticket_api.metro.line.MetroLineDtos.LineResponse;
+import com.metroticket_api.metro.station.LineTransferDtos.LineTransferResponse;
 import com.metroticket_api.metro.station.StationDtos.CreateStationRequest;
 import com.metroticket_api.metro.station.StationDtos.StationResponse;
 import com.metroticket_api.metro.station.StationDtos.UpdateStationRequest;
@@ -56,10 +57,18 @@ public class StationController {
     }
 
     /**
+     * Lấy toàn bộ ga mà không phân trang, phù hợp cho map, dropdown và filter trang quản trị.
+     */
+    @GetMapping("/stations/all")
+    public List<StationResponse> listAll() {
+        return service.listAll();
+    }
+
+    /**
      * Tìm các ga nằm trong bán kính quanh một vị trí người dùng, dùng cho chức năng “ga gần nhất” trên ứng dụng.
      */
     @GetMapping("/stations/nearest")
-    public List<Station> nearest(@RequestParam BigDecimal lat,
+    public List<StationResponse> nearest(@RequestParam BigDecimal lat,
             @RequestParam BigDecimal lng,
             @RequestParam(defaultValue = "5") double radiusKm) {
         return service.nearest(lat, lng, radiusKm);
@@ -103,7 +112,7 @@ public class StationController {
      * Trả về các điểm kết nối chuyển tuyến tại ga, phục vụ tra cứu đường đi trên bản đồ.
      */
     @GetMapping("/stations/{stationId}/connections")
-    public List<LineTransfer> connections(@PathVariable Long stationId) {
+    public List<LineTransferResponse> connections(@PathVariable Long stationId) {
         return service.connections(stationId);
     }
 
@@ -111,7 +120,7 @@ public class StationController {
      * Trả về danh sách tuyến đi qua ga, giúp xác định ga thuộc tuyến nào và tuyến nào kết nối với nhau.
      */
     @GetMapping("/stations/{stationId}/lines")
-    public List<MetroLine> lines(@PathVariable Long stationId) {
+    public List<LineResponse> lines(@PathVariable Long stationId) {
         return service.linesByStation(stationId);
     }
 }

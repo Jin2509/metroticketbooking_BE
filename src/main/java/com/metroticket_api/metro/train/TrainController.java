@@ -49,6 +49,14 @@ public class TrainController {
     }
 
     /**
+     * Lấy toàn bộ đoàn tàu mà không áp dụng paging, thích hợp cho select/filter ở frontend.
+     */
+    @GetMapping("/trains/all")
+    public List<TrainResponse> listAll() {
+        return service.listAll();
+    }
+
+    /**
      * Xem chi tiết một đoàn tàu cụ thể, bao gồm tuyến hoạt động, trạng thái và thông tin kỹ thuật.
      */
     @GetMapping("/trains/{trainId}")

@@ -19,6 +19,8 @@ import com.metroticket_api.metro.station.LineStation;
 import com.metroticket_api.metro.station.LineStationRepository;
 import com.metroticket_api.metro.station.LineTransfer;
 import com.metroticket_api.metro.station.LineTransferRepository;
+import com.metroticket_api.metro.station.LineTransferDtos.LineTransferResponse;
+import com.metroticket_api.metro.station.StationDtos.LineStationResponse;
 
 /**
  * Service chứa toàn bộ logic nghiệp vụ cho việc quản lý tuyến Metro.
@@ -68,6 +70,14 @@ public class MetroLineService {
             return lines.findByNameLineContainingIgnoreCase(name, pageable).map(LineResponse::of);
         }
         return lines.findAll(pageable).map(LineResponse::of);
+    }
+
+    /**
+     * Lấy toàn bộ tuyến mà không phân trang để frontend dễ bind dropdown/select.
+     */
+    @Transactional(readOnly = true)
+    public List<LineResponse> listAll() {
+        return lines.findAll().stream().map(LineResponse::of).toList();
     }
 
     /**
@@ -137,17 +147,21 @@ public class MetroLineService {
      * Trả về toàn bộ ga của tuyến theo thứ tự station_order để frontend hiển thị tuyến theo trật tự đi từ đầu đến cuối.
      */
     @Transactional(readOnly = true)
-    public List<LineStation> stations(Long lineId) {
+    public List<LineStationResponse> stations(Long lineId) {
         getById(lineId);
-        return lineStationRepository.findByLineIdOrderByStationOrderAsc(lineId);
+        return lineStationRepository.findByLineIdOrderByStationOrderAsc(lineId).stream()
+                .map(LineStationResponse::of)
+                .toList();
     }
 
     /**
      * Trả về các điểm chuyển tuyến của tuyến để tính đường đi giữa các tuyến khác nhau của Metro.
      */
     @Transactional(readOnly = true)
-    public List<LineTransfer> transfers(Long lineId) {
+    public List<LineTransferResponse> transfers(Long lineId) {
         getById(lineId);
-        return lineTransferRepository.findByFromLineIdOrToLineId(lineId, lineId);
+        return lineTransferRepository.findByFromLineIdOrToLineId(lineId, lineId).stream()
+                .map(LineTransferResponse::of)
+                .toList();
     }
 }

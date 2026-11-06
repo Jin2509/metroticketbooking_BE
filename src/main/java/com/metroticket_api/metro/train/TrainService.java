@@ -41,6 +41,14 @@ public class TrainService {
     }
 
     /**
+     * Lấy toàn bộ tàu mà không phân trang, phục vụ các màn hình cần load nhanh danh sách đầy đủ.
+     */
+    @Transactional(readOnly = true)
+    public List<TrainResponse> listAll() {
+        return trains.findAll().stream().map(TrainResponse::of).toList();
+    }
+
+    /**
      * Tìm tàu theo ID; nếu không tìm thấy thì trả về 404 để client biết dữ liệu không tồn tại.
      */
     @Transactional(readOnly = true)

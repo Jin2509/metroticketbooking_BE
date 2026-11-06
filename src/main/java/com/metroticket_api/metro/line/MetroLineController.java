@@ -23,9 +23,10 @@ import com.metroticket_api.metro.common.MetroLineStatus;
 import com.metroticket_api.metro.line.MetroLineDtos.CreateLineRequest;
 import com.metroticket_api.metro.line.MetroLineDtos.LineResponse;
 import com.metroticket_api.metro.line.MetroLineDtos.UpdateLineRequest;
-import com.metroticket_api.metro.station.LineStation;
-import com.metroticket_api.metro.station.LineTransfer;
+import com.metroticket_api.metro.station.LineTransferDtos.LineTransferResponse;
+import com.metroticket_api.metro.station.StationDtos;
 import com.metroticket_api.metro.station.StationDtos.AddLineStationRequest;
+import com.metroticket_api.metro.station.StationDtos.LineStationResponse;
 import com.metroticket_api.metro.station.StationDtos.StationOrderItem;
 import com.metroticket_api.metro.station.StationService;
 
@@ -58,6 +59,14 @@ public class MetroLineController {
             @RequestParam(required = false) MetroLineStatus status,
             @PageableDefault(size = 20) Pageable pageable) {
         return service.list(code, name, status, pageable);
+    }
+
+    /**
+     * Lấy toàn bộ tuyến mà không phân trang, phù hợp cho select/dropdown ở frontend.
+     */
+    @GetMapping("/lines/all")
+    public List<LineResponse> listAll() {
+        return service.listAll();
     }
 
     /**
@@ -99,7 +108,7 @@ public class MetroLineController {
      * Trả về danh sách ga theo thứ tự của tuyến, phục vụ hiển thị trên bản đồ hoặc tuyến đường.
      */
     @GetMapping("/lines/{lineId}/stations")
-    public List<LineStation> stations(@PathVariable Long lineId) {
+    public List<LineStationResponse> stations(@PathVariable Long lineId) {
         return service.stations(lineId);
     }
 
@@ -108,14 +117,28 @@ public class MetroLineController {
      */
     @PostMapping("/lines/{lineId}/stations")
     @ResponseStatus(HttpStatus.CREATED)
-    public LineStation addStationToLine(@PathVariable Long lineId,
+    public LineStationResponse addStationToLine(@PathVariable Long lineId,
            @Valid @RequestBody AddLineStationRequest request) {
        return stationService.addStationToLine(
                lineId,
                request.stationId(),
+               request.stationOrder(),
                request.distanceFromPrevKm(),
                request.travelTimeFromPrevSeconds(),
                request.dwellTimeSeconds());
+    }
+
+    /**
+     * Cập nhật thông số đoạn đường giữa ga hiện tại và ga trước đó trên tuyến.
+     */
+    @PutMapping("/lines/{lineId}/stations/{stationId}/segment")
+    public LineStationResponse updateStationSegment(@PathVariable Long lineId,
+            @PathVariable Long stationId,
+            @Valid @RequestBody StationDtos.UpdateLineStationSegmentRequest request) {
+        return stationService.updateStationSegment(lineId, stationId,
+                request.distanceFromPrevKm(),
+                request.travelTimeFromPrevSeconds(),
+                request.dwellTimeSeconds());
     }
 
     /**
@@ -131,7 +154,7 @@ public class MetroLineController {
      * Cập nhật toàn bộ thứ tự ga trên tuyến. Danh sách này phải chứa đầy đủ tất cả ga của tuyến theo thứ tự mới.
      */
     @PutMapping("/lines/{lineId}/stations/order")
-    public List<LineStation> updateStationOrder(@PathVariable Long lineId,
+    public List<LineStationResponse> updateStationOrder(@PathVariable Long lineId,
            @RequestBody List<StationOrderItem> stationOrders) {
        return stationService.updateStationOrder(lineId, stationOrders);
     }
@@ -140,7 +163,7 @@ public class MetroLineController {
      * Trả về thông tin các điểm chuyển tuyến từ tuyến hiện tại sang tuyến khác.
      */
     @GetMapping("/lines/{lineId}/transfers")
-    public List<LineTransfer> transfers(@PathVariable Long lineId) {
+    public List<LineTransferResponse> transfers(@PathVariable Long lineId) {
        return service.transfers(lineId);
     }
 }
