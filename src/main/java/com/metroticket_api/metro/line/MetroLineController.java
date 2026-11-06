@@ -8,6 +8,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -81,6 +82,7 @@ public class MetroLineController {
     /**
      * Tạo tuyến mới. Hành động này lưu bản ghi tuyến trên database và trả về dữ liệu vừa tạo.
      */
+    @PreAuthorize("hasAuthority('STATION_MANAGE')")
     @PostMapping("/lines")
     @ResponseStatus(HttpStatus.CREATED)
     public LineResponse create(@Valid @RequestBody CreateLineRequest request) {
@@ -90,6 +92,7 @@ public class MetroLineController {
     /**
      * Cập nhật thông tin tuyến hiện có, như tên, mã, màu sắc, mô tả hoặc trạng thái.
      */
+    @PreAuthorize("hasAuthority('STATION_MANAGE')")
     @PutMapping("/lines/{lineId}")
     public LineResponse update(@PathVariable Long lineId, @Valid @RequestBody UpdateLineRequest request) {
         return service.update(lineId, request);
@@ -98,6 +101,7 @@ public class MetroLineController {
     /**
      * Xóa tuyến. Khi tuyến bị xóa, các dữ liệu liên kết như ga thuộc tuyến và thông tin chuyển tuyến cũng cần được xử lý theo cascade.
      */
+    @PreAuthorize("hasAuthority('STATION_MANAGE')")
     @DeleteMapping("/lines/{lineId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable Long lineId) {
@@ -123,6 +127,7 @@ public class MetroLineController {
     /**
      * Thêm ga vào tuyến. Endpoint này tạo quan hệ tuyến-ga và gán station_order ở cuối danh sách hiện tại.
      */
+    @PreAuthorize("hasAuthority('STATION_MANAGE')")
     @PostMapping("/lines/{lineId}/stations")
     @ResponseStatus(HttpStatus.CREATED)
     public LineStationResponse addStationToLine(@PathVariable Long lineId,
@@ -139,6 +144,7 @@ public class MetroLineController {
     /**
      * Cập nhật thông số đoạn đường giữa ga hiện tại và ga trước đó trên tuyến.
      */
+    @PreAuthorize("hasAuthority('STATION_MANAGE')")
     @PutMapping("/lines/{lineId}/stations/{stationId}/segment")
     public LineStationResponse updateStationSegment(@PathVariable Long lineId,
             @PathVariable Long stationId,
@@ -152,6 +158,7 @@ public class MetroLineController {
     /**
      * Xóa ga khỏi tuyến. Bản ghi station không bị xóa, chỉ bỏ quan hệ với tuyến.
      */
+    @PreAuthorize("hasAuthority('STATION_MANAGE')")
     @DeleteMapping("/lines/{lineId}/stations/{stationId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void removeStationFromLine(@PathVariable Long lineId, @PathVariable Long stationId) {
@@ -161,6 +168,7 @@ public class MetroLineController {
     /**
      * Cập nhật toàn bộ thứ tự ga trên tuyến. Danh sách này phải chứa đầy đủ tất cả ga của tuyến theo thứ tự mới.
      */
+    @PreAuthorize("hasAuthority('STATION_MANAGE')")
     @PutMapping("/lines/{lineId}/stations/order")
     public List<LineStationResponse> updateStationOrder(@PathVariable Long lineId,
            @RequestBody List<StationOrderItem> stationOrders) {

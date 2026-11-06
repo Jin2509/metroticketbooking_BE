@@ -11,6 +11,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 
 import com.metroticket_api.metro.line.MetroLine;
@@ -57,6 +58,13 @@ public class LineStation {
         this.distanceFromPrevKm = distanceFromPrevKm;
         this.travelTimeFromPrevSeconds = travelTimeFromPrevSeconds;
         this.dwellTimeSeconds = dwellTimeSeconds == null ? 30 : dwellTimeSeconds;
+    }
+
+    @PrePersist
+    public void prePersist() {
+        if (this.createdAt == null) {
+            this.createdAt = Instant.now();
+        }
     }
 
     public Long getId() {

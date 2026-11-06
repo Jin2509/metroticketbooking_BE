@@ -9,6 +9,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -85,6 +86,7 @@ public class StationController {
     /**
      * Tạo nhà ga mới. Thông tin quan trọng gồm mã ga, tên, tọa độ, địa chỉ và trạng thái.
      */
+    @PreAuthorize("hasAuthority('STATION_MANAGE')")
     @PostMapping("/stations")
     @ResponseStatus(HttpStatus.CREATED)
     public StationResponse create(@Valid @RequestBody CreateStationRequest request) {
@@ -94,6 +96,7 @@ public class StationController {
     /**
      * Cập nhật thông tin nhà ga hiện có, ví dụ thay đổi tọa độ, tên ga hoặc trạng thái bảo trì.
      */
+    @PreAuthorize("hasAuthority('STATION_MANAGE')")
     @PutMapping("/stations/{stationId}")
     public StationResponse update(@PathVariable Long stationId, @Valid @RequestBody UpdateStationRequest request) {
         return service.update(stationId, request);
@@ -102,6 +105,7 @@ public class StationController {
     /**
      * Xóa ga khỏi hệ thống, thường dùng khi ga ngừng hoạt động lâu dài hoặc cần dọn dữ liệu.
      */
+    @PreAuthorize("hasAuthority('STATION_MANAGE')")
     @DeleteMapping("/stations/{stationId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable Long stationId) {

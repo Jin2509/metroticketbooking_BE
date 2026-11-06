@@ -5,6 +5,7 @@ import java.util.List;
 import jakarta.validation.Valid;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -45,6 +46,7 @@ public class LineTransferController {
         return LineTransferResponse.of(service.getLineTransfer(id));
     }
 
+    @PreAuthorize("hasAuthority('STATION_MANAGE')")
     @PostMapping("/line-transfers")
     @ResponseStatus(HttpStatus.CREATED)
     public LineTransferResponse create(@Valid @RequestBody CreateLineTransferRequest request) {
@@ -56,6 +58,7 @@ public class LineTransferController {
                 request.status()));
     }
 
+    @PreAuthorize("hasAuthority('STATION_MANAGE')")
     @PutMapping("/line-transfers/{id}")
     public LineTransferResponse update(@PathVariable Long id,
             @Valid @RequestBody UpdateLineTransferRequest request) {
@@ -68,6 +71,7 @@ public class LineTransferController {
                 request.status()));
     }
 
+    @PreAuthorize("hasAuthority('STATION_MANAGE')")
     @DeleteMapping("/line-transfers/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable Long id) {

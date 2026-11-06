@@ -10,6 +10,15 @@
       "status": "ACTIVE"
     },
     {
+      "email": "manager.demo@metroticket.test",
+      "password": "Doi-Mat-Khau-Nay@123",
+      "fullName": "Quản lý Demo",
+      "roles": [
+        "MANAGER"
+      ],
+      "status": "ACTIVE"
+    },
+    {
       "email": "staff.demo@metroticket.test",
       "password": "Doi-Mat-Khau-Nay@123",
       "fullName": "Nhân viên Demo",

@@ -19,5 +19,7 @@ public interface LineStationRepository extends JpaRepository<LineStation, Long> 
 
     boolean existsByLineIdAndStationId(Long lineId, Long stationId);
 
+    boolean existsByStationId(Long stationId);
+
     void deleteByLineIdAndStationId(Long lineId, Long stationId);
 }

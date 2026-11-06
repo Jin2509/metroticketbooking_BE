@@ -2,15 +2,18 @@ package com.metroticket_api.metro.station;
 
 import java.time.Instant;
 
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PositiveOrZero;
+
 import com.metroticket_api.metro.common.TransferStatus;
 
 public class LineTransferDtos {
 
     public record CreateLineTransferRequest(
-            Long stationId,
-            Long fromLineId,
-            Long toLineId,
-            Integer transferTimeMinutes,
+            @NotNull Long stationId,
+            @NotNull Long fromLineId,
+            @NotNull Long toLineId,
+            @PositiveOrZero Integer transferTimeMinutes,
             TransferStatus status) {
     }
 
@@ -18,7 +21,7 @@ public class LineTransferDtos {
             Long stationId,
             Long fromLineId,
             Long toLineId,
-            Integer transferTimeMinutes,
+            @PositiveOrZero Integer transferTimeMinutes,
             TransferStatus status) {
     }
 

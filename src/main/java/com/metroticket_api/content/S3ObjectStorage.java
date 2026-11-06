@@ -18,10 +18,6 @@ import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
-/**
- * Lưu trên S3 hoặc dịch vụ tương thích (MinIO khi chạy local). Dùng path-style vì MinIO
- * không có subdomain theo bucket. Bucket chưa có thì tạo khi ghi lần đầu.
- */
 @Component
 @ConditionalOnProperty(name = "app.storage.s3.enabled", havingValue = "true")
 public class S3ObjectStorage implements ObjectStorage {

@@ -2,16 +2,20 @@ package com.metroticket_api.metro.line;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+
+import jakarta.persistence.criteria.Predicate;
 
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.metroticket_api.metro.common.MetroLineStatus;
+import com.metroticket_api.metro.common.SortGuard;
 import com.metroticket_api.metro.line.MetroLineDtos.CreateLineRequest;
 import com.metroticket_api.metro.line.MetroLineDtos.LineResponse;
 import com.metroticket_api.metro.line.MetroLineDtos.UpdateLineRequest;
@@ -35,6 +39,9 @@ public class MetroLineService {
     private final LineStationRepository lineStationRepository;
     private final LineTransferRepository lineTransferRepository;
 
+    /** Các field client được phép truyền vào tham số sort của GET /lines. */
+    public static final Set<String> SORTABLE_FIELDS = Set.of("id", "code", "nameLine", "status", "createdAt", "updatedAt");
+
     public MetroLineService(MetroLineRepository lines,
             LineStationRepository lineStationRepository,
             LineTransferRepository lineTransferRepository) {
@@ -44,32 +51,26 @@ public class MetroLineService {
     }
 
     /**
-     * Lọc tuyến theo mã, tên hoặc trạng thái; API này thường được dùng cho màn hình quản lý tuyến.
-     * Mặc dù có thể chèn logic filter theo repository, phần này giữ dữ liệu dễ đọc và không cần thêm query phức tạp.
-     */
-    /**
-     * Lấy danh sách tuyến theo bộ lọc cho màn hình quản lý tuyến hoặc danh mục tuyến trên ứng dụng.
-     * Nếu client gửi tham số code/name/status, hệ thống sẽ lọc theo cách phù hợp và trả về Page chuẩn.
+     * Lấy danh sách tuyến cho màn hình quản lý hoặc danh mục tuyến trên ứng dụng.
+     * Các bộ lọc code (khớp chính xác, không phân biệt hoa thường), name (chứa chuỗi) và status được kết hợp với nhau (AND).
      */
     @Transactional(readOnly = true)
     public Page<LineResponse> list(String code, String name, MetroLineStatus status, Pageable pageable) {
-        if (code != null && !code.isBlank()) {
-            List<MetroLine> matches = new ArrayList<>();
-            for (MetroLine line : lines.findAll()) {
-                if (line.getCode().equalsIgnoreCase(code)
-                        || (name != null && !name.isBlank() && line.getNameLine().toLowerCase().contains(name.toLowerCase()))) {
-                    matches.add(line);
-                }
+        SortGuard.requireAllowed(pageable, SORTABLE_FIELDS);
+        Specification<MetroLine> spec = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            if (code != null && !code.isBlank()) {
+                predicates.add(cb.equal(cb.lower(root.get("code")), code.trim().toLowerCase()));
             }
-            return new PageImpl<>(matches.stream().map(LineResponse::of).toList(), pageable, matches.size());
-        }
-        if (status != null) {
-            return lines.findAllByStatus(status, pageable).map(LineResponse::of);
-        }
-        if (name != null && !name.isBlank()) {
-            return lines.findByNameLineContainingIgnoreCase(name, pageable).map(LineResponse::of);
-        }
-        return lines.findAll(pageable).map(LineResponse::of);
+            if (name != null && !name.isBlank()) {
+                predicates.add(cb.like(cb.lower(root.get("nameLine")), "%" + name.trim().toLowerCase() + "%"));
+            }
+            if (status != null) {
+                predicates.add(cb.equal(root.get("status"), status));
+            }
+            return cb.and(predicates.toArray(Predicate[]::new));
+        };
+        return lines.findAll(spec, pageable).map(LineResponse::of);
     }
 
     /**
@@ -99,10 +100,13 @@ public class MetroLineService {
         if (request.nameLine() == null || request.nameLine().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tên tuyến không được để trống");
         }
-        if (lines.findByCode(request.code()).isPresent()) {
+        String code = request.code().trim();
+        if (lines.findByCode(code).isPresent()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Mã tuyến đã tồn tại");
         }
-        MetroLine line = new MetroLine(request.code(), request.nameLine(), request.colorHex(), request.description(), request.status());
+        String colorHex = request.colorHex() == null || request.colorHex().isBlank() ? null : request.colorHex().trim();
+        String description = request.description() == null || request.description().isBlank() ? null : request.description();
+        MetroLine line = new MetroLine(code, request.nameLine().trim(), colorHex, description, request.status());
         return LineResponse.of(lines.save(line));
     }
 
@@ -114,18 +118,24 @@ public class MetroLineService {
     public LineResponse update(Long lineId, UpdateLineRequest request) {
         MetroLine line = getById(lineId);
         if (request.code() != null && !request.code().isBlank()) {
-            lines.findByCode(request.code()).ifPresent(existing -> {
+            String newCode = request.code().trim();
+            lines.findByCode(newCode).ifPresent(existing -> {
                 if (!existing.getId().equals(lineId)) {
                     throw new ResponseStatusException(HttpStatus.CONFLICT, "Mã tuyến đã tồn tại");
                 }
             });
-            line.setCode(request.code());
+            line.setCode(newCode);
         }
         if (request.nameLine() != null && !request.nameLine().isBlank()) {
-            line.setNameLine(request.nameLine());
+            line.setNameLine(request.nameLine().trim());
         }
-        line.setColorHex(request.colorHex());
-        line.setDescription(request.description());
+        // null = giữ nguyên; chuỗi rỗng = xóa giá trị.
+        if (request.colorHex() != null) {
+            line.setColorHex(request.colorHex().isBlank() ? null : request.colorHex().trim());
+        }
+        if (request.description() != null) {
+            line.setDescription(request.description().isBlank() ? null : request.description());
+        }
         if (request.status() != null) {
             line.setStatus(request.status());
         }
