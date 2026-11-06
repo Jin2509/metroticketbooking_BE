@@ -6,7 +6,8 @@ import java.util.List;
 public interface FacilityProvider {
     /**
      * Trả về các tiện ích (cafe, nhà thuốc, trường học, trạm xe buýt, công viên...) quanh tọa độ cho trước.
-     * Nguồn dữ liệu khuyến nghị: OpenStreetMap/Overpass.
+     * Dữ liệu được lấy qua Geoapify Places API.
      */
-    List<OsmFeature> getNearbyFacilities(BigDecimal lat, BigDecimal lng, int radiusMeters);
+    List<FacilityFeature> getNearbyFacilities(
+            BigDecimal lat, BigDecimal lng, int radiusMeters, FacilityCategory category, int limit);
 }

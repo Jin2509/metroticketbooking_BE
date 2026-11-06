@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * API tiện ích xung quanh ga, lấy từ dữ liệu ngoài như OSM.
+ * API tiện ích xung quanh ga, lấy từ Geoapify Places.
  */
 @RestController
 @RequestMapping("/api/v1")

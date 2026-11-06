@@ -53,6 +53,8 @@ public class SecurityConfig {
                 .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                 .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                 .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**", "/webjars/**").permitAll()
+                .requestMatchers("/ws/lines/**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/v1/public/lines/*/stations").permitAll()
                 .requestMatchers(HttpMethod.POST, AUTH_PATH + "**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/content/banners", "/api/content/banners/*/image").permitAll()
                 .requestMatchers("/api/**").authenticated()

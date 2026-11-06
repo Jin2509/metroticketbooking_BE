@@ -154,6 +154,15 @@ public class MetroLineService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<LineStationResponse> stationsByCode(String lineCode) {
+        MetroLine line = lines.findByCode(lineCode)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy tuyến"));
+        return lineStationRepository.findByLineIdOrderByStationOrderAsc(line.getId()).stream()
+                .map(LineStationResponse::of)
+                .toList();
+    }
+
     /**
      * Trả về các điểm chuyển tuyến của tuyến để tính đường đi giữa các tuyến khác nhau của Metro.
      */

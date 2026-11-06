@@ -275,6 +275,10 @@ public class OperationConfigService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Tuyến chưa có ga nào nên không thể tạo cấu hình vận hành");
         }
+        if (orderedStations.size() < 2) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Tuyến cần có ít nhất hai ga để tạo cấu hình vận hành");
+        }
 
         long readyTrainCount = trains.findByLineId(lineId).stream()
                 .filter(train -> train.getStatus() == TrainStatus.READY || train.getStatus() == TrainStatus.IN_OPERATION)
@@ -297,21 +301,21 @@ public class OperationConfigService {
         long routeTravelSeconds = orderedStations.stream()
                 .mapToLong(station -> Optional.ofNullable(station.getTravelTimeFromPrevSeconds()).orElse(0))
                 .sum();
-        long dwellSeconds = orderedStations.stream()
+        long dwellSeconds = orderedStations.subList(1, orderedStations.size() - 1).stream()
                 .mapToLong(station -> Optional.ofNullable(station.getDwellTimeSeconds()).orElse(30))
                 .sum();
-        long requiredRouteSeconds = routeTravelSeconds + dwellSeconds + ((long) config.getTurnaroundTimeMinutes() * 60L);
+        long requiredRouteSeconds = routeTravelSeconds + dwellSeconds;
         long runningSeconds = (long) config.getRunningTimeMinutes() * 60L;
         if (runningSeconds < requiredRouteSeconds) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "running_time_minutes không đủ cho hành trình từ ga đầu đến ga cuối, thời gian dừng và quay đầu của tuyến");
+                    "running_time_minutes không đủ cho thời gian chạy và dừng giữa các ga");
         }
 
-        long throughputDemand = (long) config.getNumberOfTrains() * config.getHeadwayMinutes();
-        long scheduleCapacity = config.getRunningTimeMinutes() + config.getTurnaroundTimeMinutes();
-        if (throughputDemand > scheduleCapacity) {
+        long cycleSeconds = 2L * (config.getRunningTimeMinutes() + config.getTurnaroundTimeMinutes()) * 60L;
+        long trainHeadwaySeconds = (long) config.getNumberOfTrains() * config.getHeadwayMinutes() * 60L;
+        if (trainHeadwaySeconds != cycleSeconds) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "headway_minutes và số lượng tàu không hợp lý với running_time_minutes + turnaround_time_minutes");
+                    "number_of_trains × headway_minutes phải khớp với thời gian chạy khứ hồi và quay đầu");
         }
     }
 

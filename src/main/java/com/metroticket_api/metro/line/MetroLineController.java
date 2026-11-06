@@ -113,6 +113,14 @@ public class MetroLineController {
     }
 
     /**
+     * Lấy danh sách ga công khai theo mã tuyến, phục vụ dựng bản đồ tuyến trên client.
+     */
+    @GetMapping("/public/lines/{lineCode}/stations")
+    public List<LineStationResponse> publicStations(@PathVariable String lineCode) {
+        return service.stationsByCode(lineCode);
+    }
+
+    /**
      * Thêm ga vào tuyến. Endpoint này tạo quan hệ tuyến-ga và gán station_order ở cuối danh sách hiện tại.
      */
     @PostMapping("/lines/{lineId}/stations")

@@ -13,7 +13,7 @@ import org.springframework.web.client.RestTemplate;
  * <p>Hiện tại project hỗ trợ 2 nhà cung cấp chính:
  * <ul>
  *   <li>Bus: city transit provider hoặc GTFS-backed API, ví dụ http://apicms.ebms.vn/businfo.</li>
- *   <li>Facilities: OpenStreetMap/Overpass, ví dụ https://overpass-api.de/api/interpreter.</li>
+ *   <li>Facilities: Geoapify Places API, ví dụ https://api.geoapify.com/v2/places.</li>
  * </ul>
  * Các endpoint và path được cấu hình qua application.properties bằng biến môi trường.
  */
@@ -30,8 +30,8 @@ public class ExternalApiConfig {
     }
 
     @Bean
-    @Qualifier("osmRestTemplate")
-    public RestTemplate osmRestTemplate() {
+    @Qualifier("facilityRestTemplate")
+    public RestTemplate facilityRestTemplate() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(3000);
         factory.setReadTimeout(15000);

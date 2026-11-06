@@ -2,6 +2,8 @@ package com.metroticket_api.external.facility;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.EnumMap;
 import java.util.List;
 
 import org.springframework.cache.annotation.Cacheable;
@@ -11,10 +13,13 @@ import com.metroticket_api.metro.station.Station;
 import com.metroticket_api.metro.station.StationService;
 
 /**
- * Service phân loại và lọc các tiện ích quanh ga theo category.
+ * Service phân loại và giới hạn tiện ích quanh ga theo category.
  */
 @Service
 public class FacilityService {
+
+    private static final int MAX_RESULTS = 10;
+    private static final int MAX_ALL_CATEGORY_RESULTS = 2;
 
     private final FacilityProvider facilityProvider;
     private final StationService stationService;
@@ -25,67 +30,120 @@ public class FacilityService {
     }
 
     @Cacheable(value = "facility-nearby",
-            key = "'station:' + #stationId + ':category:' + (#category != null ? #category.name() : 'ALL') + ':radius:' + #radiusMeters")
+            key = "'v3:station:' + #stationId + ':category:' + (#category != null ? #category.name() : 'ALL') + ':radius:' + #radiusMeters")
     public List<FacilityDto> getNearbyFacilities(Long stationId, FacilityCategory category, int radiusMeters) {
         Station station = stationService.getById(stationId);
-        List<OsmFeature> features = facilityProvider.getNearbyFacilities(station.getLatitude(), station.getLongitude(), radiusMeters);
+        EnumMap<FacilityCategory, List<FacilityDto>> byCategory = new EnumMap<>(FacilityCategory.class);
+        if (category == null) {
+            for (FacilityCategory requestedCategory : FacilityCategory.values()) {
+                addFacilities(byCategory, requestedCategory, station.getLatitude(), station.getLongitude(),
+                        radiusMeters, MAX_ALL_CATEGORY_RESULTS);
+            }
+        } else {
+            addFacilities(byCategory, category, station.getLatitude(), station.getLongitude(),
+                    radiusMeters, MAX_RESULTS);
+        }
 
-        List<FacilityDto> result = new ArrayList<>();
-        long index = 1L;
-        for (OsmFeature feature : features) {
-            FacilityCategory mapped = mapCategory(feature);
-            if (category != null && mapped != category) {
+        List<FacilityDto> selected = category == null
+                ? selectRoundRobin(byCategory)
+                : byCategory.getOrDefault(category, List.of()).stream().limit(MAX_RESULTS).toList();
+        return reindex(selected);
+    }
+
+    private void addFacilities(EnumMap<FacilityCategory, List<FacilityDto>> byCategory,
+            FacilityCategory requestedCategory, BigDecimal latitude, BigDecimal longitude,
+            int radiusMeters, int limit) {
+        List<FacilityFeature> features = facilityProvider.getNearbyFacilities(
+                latitude, longitude, radiusMeters, requestedCategory, limit);
+        for (FacilityFeature feature : features) {
+            FacilityCategory mapped = mapCategory(feature.categories());
+            if (mapped != requestedCategory) {
                 continue;
             }
-
-            result.add(new FacilityDto(
-                    index++,
+            List<FacilityDto> categoryResults = byCategory.computeIfAbsent(mapped, ignored -> new ArrayList<>());
+            categoryResults.add(new FacilityDto(
+                    (long) categoryResults.size() + 1,
                     feature.name(),
                     mapped,
                     feature.latitude(),
                     feature.longitude(),
-                    calculateDistance(station.getLatitude(), station.getLongitude(), feature.latitude(), feature.longitude()),
-                    null,
-                    "OSM"));
+                    calculateDistance(latitude, longitude, feature.latitude(), feature.longitude()),
+                    feature.address(),
+                    "GEOAPIFY"));
+        }
+    }
+
+    private List<FacilityDto> reindex(List<FacilityDto> selected) {
+        List<FacilityDto> result = new ArrayList<>(selected.size());
+        for (FacilityDto facility : selected) {
+            result.add(new FacilityDto(
+                    (long) result.size() + 1,
+                    facility.name(),
+                    facility.category(),
+                    facility.latitude(),
+                    facility.longitude(),
+                    facility.distanceMeters(),
+                    facility.address(),
+                    facility.source()));
         }
         return result;
     }
 
-    private FacilityCategory mapCategory(OsmFeature feature) {
-        String amenity = feature.amenity() == null ? "" : feature.amenity().toLowerCase();
-        String shop = feature.shop() == null ? "" : feature.shop().toLowerCase();
-        String leisure = feature.leisure() == null ? "" : feature.leisure().toLowerCase();
-        String tourism = feature.tourism() == null ? "" : feature.tourism().toLowerCase();
+    private List<FacilityDto> selectRoundRobin(EnumMap<FacilityCategory, List<FacilityDto>> byCategory) {
+        List<FacilityDto> result = new ArrayList<>(MAX_RESULTS);
+        int round = 0;
+        while (result.size() < MAX_RESULTS) {
+            boolean addedInRound = false;
+            for (FacilityCategory category : FacilityCategory.values()) {
+                List<FacilityDto> categoryResults = byCategory.getOrDefault(category, List.of());
+                if (round < categoryResults.size()) {
+                    result.add(categoryResults.get(round));
+                    addedInRound = true;
+                    if (result.size() == MAX_RESULTS) {
+                        break;
+                    }
+                }
+            }
+            if (!addedInRound) {
+                break;
+            }
+            round++;
+        }
+        return result;
+    }
 
-        if (amenity.matches("restaurant|cafe|food_court|fast_food|bar|pub|canteen|ice_cream")) {
+    private FacilityCategory mapCategory(List<String> categories) {
+        if (hasCategory(categories, "catering")) {
             return FacilityCategory.FOOD;
         }
-        if (amenity.matches("pharmacy|hospital|clinic|dentist|veterinary|doctors")) {
+        if (hasCategory(categories, "healthcare")) {
             return FacilityCategory.HEALTH;
         }
-        if (amenity.matches("school|college|university|kindergarten|library")) {
+        if (hasCategory(categories, "education")) {
             return FacilityCategory.EDUCATION;
         }
-        if (amenity.matches("bank|atm|bureau_de_change")) {
+        if (hasCategory(categories, "office.financial")) {
             return FacilityCategory.BANK;
         }
-        if (amenity.matches("bus_station|train_station|subway_station|subway_entrance|taxi|parking|fuel|bicycle_rental|car_rental|charging_station")) {
+        if (hasCategory(categories, "public_transport", "parking", "rental", "service.vehicle")) {
             return FacilityCategory.TRANSPORT;
         }
-
-        if (shop.matches("supermarket|convenience|bakery|mall|department_store|clothes|marketplace|greengrocer")) {
+        if (hasCategory(categories, "commercial")) {
             return FacilityCategory.SHOP;
         }
-        if (leisure.matches("park|garden|playground|pitch|stadium|sports_centre")) {
+        if (hasCategory(categories, "leisure")) {
             return FacilityCategory.PARK;
         }
-        if (tourism.matches("museum|hotel|attraction|gallery|viewpoint")) {
+        if (hasCategory(categories, "entertainment", "tourism", "accommodation")) {
             return FacilityCategory.ENTERTAINMENT;
         }
-        if (shop.matches("marketplace")) {
-            return FacilityCategory.SHOP;
-        }
         return FacilityCategory.OTHER;
+    }
+
+    private boolean hasCategory(List<String> categories, String... prefixes) {
+        return categories != null && categories.stream()
+                .anyMatch(categoryValue -> Arrays.stream(prefixes)
+                        .anyMatch(prefix -> categoryValue.equals(prefix) || categoryValue.startsWith(prefix + ".")));
     }
 
     private double calculateDistance(BigDecimal lat1, BigDecimal lon1, BigDecimal lat2, BigDecimal lon2) {
