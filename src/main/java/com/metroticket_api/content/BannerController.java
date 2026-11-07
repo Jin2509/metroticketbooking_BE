@@ -49,7 +49,7 @@ public class BannerController {
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('CONTENT_MANAGE')")
     @ResponseStatus(HttpStatus.CREATED)
     public BannerResponse add(@RequestParam MultipartFile image, @RequestParam String title,
             @RequestParam(required = false) String subtitle,
@@ -59,7 +59,7 @@ public class BannerController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('CONTENT_MANAGE')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable String id) {
         banners.delete(id);

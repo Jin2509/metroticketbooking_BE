@@ -8,10 +8,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.metroticket_api.metro.common.AnnouncementStatus;
 import com.metroticket_api.metro.common.OperationConfigStatus;
@@ -59,8 +61,9 @@ public class WorkflowEngineService {
         if (targetStatus == null || targetStatus.isBlank()) {
             throw new IllegalArgumentException("targetStatus không được trống");
         }
+        // Sai trạng thái là lỗi nghiệp vụ của client (409), không phải lỗi hệ thống (500)
         if (currentStatus.equalsIgnoreCase(targetStatus)) {
-            throw new IllegalStateException("Không thể chuyển sang trạng thái hiện tại");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Bản ghi đã ở trạng thái " + targetStatus);
         }
 
         WorkflowDefinition definition = definitions.get(entityType);
@@ -70,7 +73,7 @@ public class WorkflowEngineService {
 
         Set<String> allowedTransitions = definition.allowedTransitions(currentStatus);
         if (!allowedTransitions.contains(targetStatus)) {
-            throw new IllegalStateException(
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Không được phép chuyển từ " + currentStatus + " sang " + targetStatus + " cho " + entityType);
         }
 
@@ -92,41 +95,55 @@ public class WorkflowEngineService {
     }
 
     private void registerAnnouncementWorkflow() {
+        Set<String> makers = Set.of(RoleCodes.STAFF, RoleCodes.ADMIN, RoleCodes.SYSTEM);
+        Set<String> checkers = Set.of(RoleCodes.MANAGER, RoleCodes.ADMIN, RoleCodes.SYSTEM);
         Map<String, List<WorkflowStep>> steps = new java.util.HashMap<>();
         steps.put(AnnouncementStatus.DRAFT.name(), List.of(
                 new WorkflowStep(AnnouncementStatus.DRAFT.name(), AnnouncementStatus.PENDING_APPROVAL.name(),
-                        Set.of(RoleCodes.STAFF, RoleCodes.ADMIN, RoleCodes.SYSTEM), "Gửi duyệt")));
+                        makers, "Gửi duyệt")));
         steps.put(AnnouncementStatus.PENDING_APPROVAL.name(), List.of(
                 new WorkflowStep(AnnouncementStatus.PENDING_APPROVAL.name(), AnnouncementStatus.APPROVED.name(),
-                        Set.of(RoleCodes.ADMIN, RoleCodes.SYSTEM), "Phê duyệt"),
+                        checkers, "Phê duyệt"),
                 new WorkflowStep(AnnouncementStatus.PENDING_APPROVAL.name(), AnnouncementStatus.REJECTED.name(),
-                        Set.of(RoleCodes.ADMIN, RoleCodes.SYSTEM), "Từ chối")));
+                        checkers, "Từ chối")));
+        steps.put(AnnouncementStatus.REJECTED.name(), List.of(
+                new WorkflowStep(AnnouncementStatus.REJECTED.name(), AnnouncementStatus.DRAFT.name(),
+                        makers, "Sửa lại bản bị từ chối")));
 
         definitions.put(WorkflowEntityType.ANNOUNCEMENT,
                 new WorkflowDefinition(WorkflowEntityType.ANNOUNCEMENT, "Announcement approval workflow", steps));
     }
 
+    /**
+     * DRAFT → PENDING_APPROVAL → APPROVED/REJECTED; REJECTED → DRAFT khi người soạn sửa lại;
+     * APPROVED → ACTIVE (go-live) ↔ INACTIVE. Người duyệt là MANAGER (hoặc ADMIN), người soạn là ADMIN/STAFF.
+     */
     private void registerOperationConfigWorkflow() {
+        Set<String> makers = Set.of(RoleCodes.STAFF, RoleCodes.ADMIN, RoleCodes.SYSTEM);
+        Set<String> checkers = Set.of(RoleCodes.MANAGER, RoleCodes.ADMIN, RoleCodes.SYSTEM);
         Map<String, List<WorkflowStep>> steps = new java.util.HashMap<>();
         steps.put(OperationConfigStatus.DRAFT.name(), List.of(
                 new WorkflowStep(OperationConfigStatus.DRAFT.name(), OperationConfigStatus.PENDING_APPROVAL.name(),
-                        Set.of(RoleCodes.STAFF, RoleCodes.ADMIN, RoleCodes.SYSTEM), "Gửi duyệt")));
+                        makers, "Gửi duyệt")));
         steps.put(OperationConfigStatus.PENDING_APPROVAL.name(), List.of(
                 new WorkflowStep(OperationConfigStatus.PENDING_APPROVAL.name(), OperationConfigStatus.APPROVED.name(),
-                        Set.of(RoleCodes.ADMIN, RoleCodes.SYSTEM), "Phê duyệt"),
+                        checkers, "Phê duyệt"),
                 new WorkflowStep(OperationConfigStatus.PENDING_APPROVAL.name(), OperationConfigStatus.REJECTED.name(),
-                        Set.of(RoleCodes.ADMIN, RoleCodes.SYSTEM), "Từ chối")));
+                        checkers, "Từ chối")));
+        steps.put(OperationConfigStatus.REJECTED.name(), List.of(
+                new WorkflowStep(OperationConfigStatus.REJECTED.name(), OperationConfigStatus.DRAFT.name(),
+                        makers, "Sửa lại bản bị từ chối")));
         steps.put(OperationConfigStatus.APPROVED.name(), List.of(
                 new WorkflowStep(OperationConfigStatus.APPROVED.name(), OperationConfigStatus.ACTIVE.name(),
-                        Set.of(RoleCodes.ADMIN, RoleCodes.SYSTEM), "Kích hoạt"),
+                        checkers, "Kích hoạt"),
                 new WorkflowStep(OperationConfigStatus.APPROVED.name(), OperationConfigStatus.INACTIVE.name(),
-                        Set.of(RoleCodes.ADMIN, RoleCodes.SYSTEM), "Đặt không hoạt động")));
+                        checkers, "Đặt không hoạt động")));
         steps.put(OperationConfigStatus.ACTIVE.name(), List.of(
                 new WorkflowStep(OperationConfigStatus.ACTIVE.name(), OperationConfigStatus.INACTIVE.name(),
-                        Set.of(RoleCodes.ADMIN, RoleCodes.SYSTEM), "Vô hiệu hóa")));
+                        checkers, "Vô hiệu hóa")));
         steps.put(OperationConfigStatus.INACTIVE.name(), List.of(
                 new WorkflowStep(OperationConfigStatus.INACTIVE.name(), OperationConfigStatus.ACTIVE.name(),
-                        Set.of(RoleCodes.ADMIN, RoleCodes.SYSTEM), "Kích hoạt lại")));
+                        checkers, "Kích hoạt lại")));
 
         definitions.put(WorkflowEntityType.OPERATION_CONFIG,
                 new WorkflowDefinition(WorkflowEntityType.OPERATION_CONFIG, "Operation config approval workflow", steps));

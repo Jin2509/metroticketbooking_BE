@@ -15,6 +15,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.metroticket_api.metro.common.MetroLineStatus;
+import com.metroticket_api.metro.common.OperationConfigStatus;
+import com.metroticket_api.metro.common.TrainStatus;
+import com.metroticket_api.metro.operation.OperationConfigRepository;
+import com.metroticket_api.metro.train.TrainRepository;
 import com.metroticket_api.metro.common.SortGuard;
 import com.metroticket_api.metro.line.MetroLineDtos.CreateLineRequest;
 import com.metroticket_api.metro.line.MetroLineDtos.LineResponse;
@@ -38,16 +42,22 @@ public class MetroLineService {
     private final MetroLineRepository lines;
     private final LineStationRepository lineStationRepository;
     private final LineTransferRepository lineTransferRepository;
+    private final OperationConfigRepository operationConfigs;
+    private final TrainRepository trains;
 
     /** Các field client được phép truyền vào tham số sort của GET /lines. */
     public static final Set<String> SORTABLE_FIELDS = Set.of("id", "code", "nameLine", "status", "createdAt", "updatedAt");
 
     public MetroLineService(MetroLineRepository lines,
             LineStationRepository lineStationRepository,
-            LineTransferRepository lineTransferRepository) {
+            LineTransferRepository lineTransferRepository,
+            OperationConfigRepository operationConfigs,
+            TrainRepository trains) {
         this.lines = lines;
         this.lineStationRepository = lineStationRepository;
         this.lineTransferRepository = lineTransferRepository;
+        this.operationConfigs = operationConfigs;
+        this.trains = trains;
     }
 
     /**
@@ -136,7 +146,10 @@ public class MetroLineService {
         if (request.description() != null) {
             line.setDescription(request.description().isBlank() ? null : request.description());
         }
-        if (request.status() != null) {
+        if (request.status() != null && request.status() != line.getStatus()) {
+            if (request.status() != MetroLineStatus.ACTIVE) {
+                ensureNotOperating(lineId, "chuyển tuyến sang " + request.status());
+            }
             line.setStatus(request.status());
         }
         return LineResponse.of(lines.save(line));
@@ -150,7 +163,22 @@ public class MetroLineService {
         if (!lines.existsById(id)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy tuyến");
         }
+        ensureNotOperating(id, "xoá tuyến");
         lines.deleteById(id);
+    }
+
+    /** Không cho ngừng/xoá tuyến khi đang có lịch chạy ACTIVE hoặc tàu IN_OPERATION trên tuyến. */
+    private void ensureNotOperating(Long lineId, String action) {
+        if (!operationConfigs.findByLineIdAndStatus(lineId, OperationConfigStatus.ACTIVE).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Tuyến đang có cấu hình vận hành ACTIVE, hãy huỷ kích hoạt trước khi " + action);
+        }
+        boolean trainsRunning = trains.findByLineId(lineId).stream()
+                .anyMatch(train -> train.getStatus() == TrainStatus.IN_OPERATION);
+        if (trainsRunning) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Tuyến còn tàu đang vận hành (IN_OPERATION), không thể " + action);
+        }
     }
 
     /**

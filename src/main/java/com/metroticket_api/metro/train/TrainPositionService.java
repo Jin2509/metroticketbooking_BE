@@ -7,14 +7,15 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.metroticket_api.metro.common.MetroLineStatus;
 import com.metroticket_api.metro.common.OperationConfigStatus;
-import com.metroticket_api.metro.common.TrainStatus;
 import com.metroticket_api.metro.line.MetroLine;
 import com.metroticket_api.metro.line.MetroLineRepository;
 import com.metroticket_api.metro.operation.OperationConfig;
@@ -22,10 +23,24 @@ import com.metroticket_api.metro.operation.OperationConfigRepository;
 import com.metroticket_api.metro.station.LineStation;
 import com.metroticket_api.metro.station.LineStationRepository;
 
+/**
+ * Mô phỏng vị trí tàu theo cấu hình vận hành ACTIVE của tuyến.
+ *
+ * <p>Một vòng (cycle) = chiều đi + quay đầu ở ga cuối + chiều về + quay đầu ở ga đầu. Tàu thứ i lệch pha
+ * i × headway so với tàu đầu. Thời gian chạy từng đoạn được co giãn theo tỉ lệ travel_time để tổng chiều đi
+ * đúng bằng running_time_minutes.</p>
+ *
+ * <ul>
+ *   <li>Tuyến không ACTIVE hoặc ngoài giờ vận hành → không có tàu.</li>
+ *   <li>Số tàu sẵn sàng ít hơn cấu hình (tàu hỏng/bảo trì đột xuất) → chạy với số tàu còn lại, giữ đúng
+ *       slot pha của các tàu còn lại (xuất hiện khoảng trống trong lịch chạy, đúng như thực tế).</li>
+ * </ul>
+ */
 @Service
 public class TrainPositionService {
 
-    private static final ZoneId VIETNAM = ZoneId.of("Asia/Ho_Chi_Minh");
+    static final ZoneId VIETNAM = ZoneId.of("Asia/Ho_Chi_Minh");
+    private static final long DAY_SECONDS = 24L * 60 * 60;
 
     private final OperationConfigRepository configs;
     private final MetroLineRepository lines;
@@ -46,7 +61,95 @@ public class TrainPositionService {
     public List<TrainPositionResponse> getPositions(Long lineId) {
         MetroLine line = lines.findById(lineId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy tuyến"));
+        Optional<Simulation> simulation = prepare(line, clock.instant());
+        if (simulation.isEmpty()) {
+            return List.of();
+        }
+        Simulation sim = simulation.get();
+        List<TrainPositionResponse> positions = new ArrayList<>(sim.trains().size());
+        for (int i = 0; i < sim.trains().size(); i++) {
+            positions.add(simulatePosition(sim.trains().get(i), line, sim.route(), sim.cycle(), sim.phaseOf(i)));
+        }
+        return positions;
+    }
+
+    /**
+     * Các chuyến sắp rời ga theo từng hướng, tính từ cùng mô hình với {@link #getPositions(Long)} nên khớp với
+     * vị trí tàu hiển thị trên bản đồ.
+     */
+    @Transactional(readOnly = true)
+    public StationArrivalsResponse getArrivals(String lineCode, String stationCode, int limitPerDirection) {
+        MetroLine line = lines.findByCode(lineCode)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy tuyến"));
+        int limit = Math.clamp(limitPerDirection, 1, 20);
         Instant now = clock.instant();
+        List<LineStation> route = lineStations.findByLineIdOrderByStationOrderAsc(line.getId());
+        LineStation target = route.stream()
+                .filter(ls -> ls.getStation().getCode().equalsIgnoreCase(stationCode))
+                .findFirst()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ga không thuộc tuyến " + line.getCode()));
+
+        Optional<Simulation> simulation = prepare(line, now);
+        if (simulation.isEmpty()) {
+            return new StationArrivalsResponse(line.getCode(), target.getStation().getCode(),
+                    target.getStation().getNameStation(), now.toString(), false, List.of());
+        }
+        Simulation sim = simulation.get();
+
+        // Các thời điểm (offset trong vòng) tàu rời ga target, kèm thời điểm tàu đã vào ga trước đó
+        List<long[]> events = new ArrayList<>();      // {departureOffset, arrivalOffset, outbound(1/0)}
+        long offset = 0;
+        List<MotionStep> cycle = sim.cycle();
+        for (int s = 0; s < cycle.size(); s++) {
+            MotionStep step = cycle.get(s);
+            if (step.movement() && sameStation(step.from(), target)) {
+                MotionStep previous = cycle.get(Math.floorMod(s - 1, cycle.size()));
+                long arrival = !previous.movement() && sameStation(previous.from(), target)
+                        ? offset - previous.durationSeconds()
+                        : offset;
+                events.add(new long[] { offset, arrival, step.outbound() ? 1 : 0 });
+            }
+            offset += step.durationSeconds();
+        }
+
+        List<StationArrival> outbound = new ArrayList<>();
+        List<StationArrival> inbound = new ArrayList<>();
+        LineStation first = sim.route().get(0);
+        LineStation last = sim.route().get(sim.route().size() - 1);
+        for (int i = 0; i < sim.trains().size(); i++) {
+            long phase = sim.phaseOf(i);
+            for (long[] event : events) {
+                long departureIn = Math.floorMod(event[0] - phase, sim.cycleSeconds());
+                long dwell = event[0] - event[1];
+                for (long k = departureIn; k <= sim.remainingOperatingSeconds(); k += sim.cycleSeconds()) {
+                    boolean isOutbound = event[2] == 1;
+                    LineStation headsign = isOutbound ? last : first;
+                    StationArrival arrival = new StationArrival(
+                            sim.trains().get(i).getCode(),
+                            isOutbound ? "OUTBOUND" : "INBOUND",
+                            headsign.getStation().getCode(),
+                            headsign.getStation().getNameStation(),
+                            Math.max(0, k - dwell),
+                            k,
+                            now.plusSeconds(k).toString());
+                    (isOutbound ? outbound : inbound).add(arrival);
+                }
+            }
+        }
+        Comparator<StationArrival> byDeparture = Comparator.comparingLong(StationArrival::departureInSec);
+        List<StationArrival> result = new ArrayList<>();
+        outbound.stream().sorted(byDeparture).limit(limit).forEach(result::add);
+        inbound.stream().sorted(byDeparture).limit(limit).forEach(result::add);
+        return new StationArrivalsResponse(line.getCode(), target.getStation().getCode(),
+                target.getStation().getNameStation(), now.toString(), true, result);
+    }
+
+    /** Rỗng khi tuyến không chạy (không ACTIVE, ngoài giờ, không còn tàu sẵn sàng). */
+    private Optional<Simulation> prepare(MetroLine line, Instant now) {
+        if (line.getStatus() != MetroLineStatus.ACTIVE) {
+            return Optional.empty();
+        }
+        Long lineId = line.getId();
         OperationConfig config = configs.findByLineIdAndStatus(lineId, OperationConfigStatus.ACTIVE).stream()
                 .filter(candidate -> !candidate.getEffectiveFrom().isAfter(now))
                 .filter(candidate -> candidate.getEffectiveTo() == null || candidate.getEffectiveTo().isAfter(now))
@@ -57,7 +160,7 @@ public class TrainPositionService {
         LocalTime localNow = LocalTime.ofInstant(now, VIETNAM);
         long operatingElapsedSeconds = getOperatingElapsedSeconds(config, localNow);
         if (operatingElapsedSeconds < 0) {
-            return List.of();
+            return Optional.empty();
         }
         if (config.getNumberOfTrains() == null || config.getNumberOfTrains() <= 0
                 || config.getHeadwayMinutes() == null || config.getHeadwayMinutes() <= 0
@@ -73,22 +176,17 @@ public class TrainPositionService {
         }
 
         List<Train> availableTrains = trains.findByLineId(lineId).stream()
-                .filter(train -> train.getStatus() == TrainStatus.READY || train.getStatus() == TrainStatus.IN_OPERATION)
+                .filter(train -> train.getStatus() != null && train.getStatus().isAvailableForService())
                 .sorted(Comparator.comparing(Train::getCode))
                 .limit(config.getNumberOfTrains())
                 .toList();
-        if (availableTrains.size() < config.getNumberOfTrains()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Số tàu sẵn sàng trên tuyến ít hơn number_of_trains trong cấu hình ACTIVE");
+        if (availableTrains.isEmpty()) {
+            return Optional.empty();
         }
 
-        long headwaySeconds = config.getHeadwayMinutes() * 60L;
-        List<TrainPositionResponse> positions = new ArrayList<>(config.getNumberOfTrains());
-        for (int i = 0; i < availableTrains.size(); i++) {
-            long phaseSeconds = Math.floorMod(operatingElapsedSeconds + (i * headwaySeconds), cycleSeconds);
-            positions.add(simulatePosition(availableTrains.get(i), line, route, cycle, phaseSeconds));
-        }
-        return positions;
+        long remaining = Math.floorMod(config.getEndTime().toSecondOfDay() - localNow.toSecondOfDay(), DAY_SECONDS);
+        return Optional.of(new Simulation(route, cycle, cycleSeconds, availableTrains, operatingElapsedSeconds,
+                config.getHeadwayMinutes() * 60L, remaining));
     }
 
     private long getOperatingElapsedSeconds(OperationConfig config, LocalTime now) {
@@ -108,7 +206,7 @@ public class TrainPositionService {
         }
 
         long elapsed = now.toSecondOfDay() - start.toSecondOfDay();
-        return elapsed < 0 ? elapsed + 24L * 60 * 60 : elapsed;
+        return elapsed < 0 ? elapsed + DAY_SECONDS : elapsed;
     }
 
     private List<MotionStep> buildCycle(List<LineStation> route, OperationConfig config) {
@@ -197,7 +295,7 @@ public class TrainPositionService {
 
         MotionStep step = cycle.get(stepIndex);
         MotionStep nextMove = step.movement() ? step : nextMovement(cycle, stepIndex);
-        LineStation headsign = step.outbound()
+        LineStation headsign = nextMove.outbound()
                 ? route.get(route.size() - 1)
                 : route.get(0);
 
@@ -238,12 +336,23 @@ public class TrainPositionService {
         throw new ResponseStatusException(HttpStatus.CONFLICT, "Không tìm thấy ga kế tiếp trong lịch mô phỏng");
     }
 
+    private static boolean sameStation(LineStation a, LineStation b) {
+        return a.getStation().getCode().equalsIgnoreCase(b.getStation().getCode());
+    }
+
     private double interpolate(double from, double to, double fraction) {
         return from + ((to - from) * fraction);
     }
 
     private record MotionStep(LineStation from, LineStation to, boolean movement, boolean outbound,
             long durationSeconds) {
+    }
+
+    private record Simulation(List<LineStation> route, List<MotionStep> cycle, long cycleSeconds, List<Train> trains,
+            long operatingElapsedSeconds, long headwaySeconds, long remainingOperatingSeconds) {
+        long phaseOf(int trainIndex) {
+            return Math.floorMod(operatingElapsedSeconds + (trainIndex * headwaySeconds), cycleSeconds);
+        }
     }
 
     public record TrainPositionResponse(
@@ -255,5 +364,24 @@ public class TrainPositionService {
             long etaSec,
             String status,
             String headsignStationId) {
+    }
+
+    public record StationArrival(
+            String trainId,
+            String direction,
+            String headsignStationId,
+            String headsignStationName,
+            long arrivalInSec,
+            long departureInSec,
+            String expectedDepartureAt) {
+    }
+
+    public record StationArrivalsResponse(
+            String lineId,
+            String stationId,
+            String stationName,
+            String generatedAt,
+            boolean inService,
+            List<StationArrival> arrivals) {
     }
 }

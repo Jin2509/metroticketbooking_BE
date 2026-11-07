@@ -11,6 +11,8 @@ public interface OperationConfigRepository extends JpaRepository<OperationConfig
 
     List<OperationConfig> findByLineIdOrderByEffectiveFromDesc(Long lineId);
 
+    List<OperationConfig> findByStatusOrderByLineIdAscVersionDesc(OperationConfigStatus status);
+
     Optional<OperationConfig> findTopByLineIdOrderByVersionDesc(Long lineId);
 
     List<OperationConfig> findByLineIdAndStatus(Long lineId, OperationConfigStatus status);

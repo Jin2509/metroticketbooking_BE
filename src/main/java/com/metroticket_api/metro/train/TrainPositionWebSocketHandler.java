@@ -31,6 +31,8 @@ public class TrainPositionWebSocketHandler extends TextWebSocketHandler {
     private final MetroLineRepository lines;
     private final TrainPositionService positions;
     private final ObjectMapper objectMapper;
+    /** Giới hạn kết nối ẩn danh đồng thời (endpoint công khai). */
+    static final int MAX_SESSIONS = 2_000;
     private final Map<String, Subscription> subscriptions = new ConcurrentHashMap<>();
 
     public TrainPositionWebSocketHandler(MetroLineRepository lines, TrainPositionService positions,
@@ -53,6 +55,10 @@ public class TrainPositionWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
+        if (subscriptions.size() >= MAX_SESSIONS) {
+            closeWithError(session, HttpStatus.SERVICE_UNAVAILABLE.value(), "Máy chủ đang quá tải, vui lòng thử lại sau");
+            return;
+        }
         String lineCode = pathSegments[3];
         try {
             MetroLine line = lines.findByCode(lineCode)
@@ -80,44 +86,56 @@ public class TrainPositionWebSocketHandler extends TextWebSocketHandler {
         logger.warn("Train position WebSocket transport failed for session {}", session.getId(), exception);
     }
 
+    /**
+     * Mỗi giây tính vị trí MỘT lần cho mỗi tuyến có người xem rồi gửi cùng một JSON cho mọi kết nối của tuyến đó
+     * (trước đây mỗi kết nối tự tính và truy vấn DB riêng → N kết nối = N lần truy vấn mỗi giây).
+     */
     @Scheduled(fixedRate = 1000)
     public void broadcastPositions() {
+        Map<Long, List<Subscription>> byLine = new java.util.HashMap<>();
         for (Map.Entry<String, Subscription> entry : subscriptions.entrySet()) {
-            WebSocketSession session = findOpenSession(entry.getKey());
-            if (session == null) {
+            if (!entry.getValue().session().isOpen()) {
                 subscriptions.remove(entry.getKey());
                 continue;
             }
+            byLine.computeIfAbsent(entry.getValue().lineId(), id -> new java.util.ArrayList<>()).add(entry.getValue());
+        }
+        for (Map.Entry<Long, List<Subscription>> line : byLine.entrySet()) {
+            String json;
             try {
-                sendSnapshot(session, entry.getValue());
+                json = snapshotJson(line.getKey(), line.getValue().get(0).lineCode());
             } catch (ResponseStatusException exception) {
-                closeWithError(session, exception.getStatusCode().value(), exception.getReason());
-            } catch (IOException exception) {
-                subscriptions.remove(session.getId());
-                logger.warn("Could not send train positions to session {}", session.getId(), exception);
+                line.getValue().forEach(sub -> closeWithError(sub.session(), exception.getStatusCode().value(),
+                        exception.getReason()));
+                continue;
             } catch (RuntimeException exception) {
-                subscriptions.remove(session.getId());
-                logger.error("Unexpected failure while simulating train positions for session {}", session.getId(),
-                        exception);
-                closeWithError(session, HttpStatus.INTERNAL_SERVER_ERROR.value(),
-                        "Không thể mô phỏng vị trí tàu lúc này");
+                logger.error("Unexpected failure while simulating train positions for line {}", line.getKey(), exception);
+                line.getValue().forEach(sub -> closeWithError(sub.session(), HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                        "Không thể mô phỏng vị trí tàu lúc này"));
+                continue;
+            }
+            for (Subscription sub : line.getValue()) {
+                try {
+                    send(sub.session(), json);
+                } catch (IOException exception) {
+                    subscriptions.remove(sub.session().getId());
+                    logger.warn("Could not send train positions to session {}", sub.session().getId(), exception);
+                }
             }
         }
     }
 
-    private WebSocketSession findOpenSession(String sessionId) {
-        Subscription subscription = subscriptions.get(sessionId);
-        return subscription == null || !subscription.session().isOpen() ? null : subscription.session();
+    private void sendSnapshot(WebSocketSession session, Subscription subscription) throws IOException {
+        send(session, snapshotJson(subscription.lineId(), subscription.lineCode()));
     }
 
-    private void sendSnapshot(WebSocketSession session, Subscription subscription) throws IOException {
-        List<TrainPositionResponse> currentPositions = positions.getPositions(subscription.lineId());
-        TrainPositionUpdate update = new TrainPositionUpdate(
-                "positions",
-                subscription.lineCode(),
-                Instant.now().toString(),
-                currentPositions);
-        String json = objectMapper.writeValueAsString(update);
+    private String snapshotJson(Long lineId, String lineCode) {
+        List<TrainPositionResponse> currentPositions = positions.getPositions(lineId);
+        return objectMapper.writeValueAsString(new TrainPositionUpdate("positions", lineCode, Instant.now().toString(),
+                currentPositions));
+    }
+
+    private void send(WebSocketSession session, String json) throws IOException {
         synchronized (session) {
             if (session.isOpen()) {
                 session.sendMessage(new TextMessage(json));

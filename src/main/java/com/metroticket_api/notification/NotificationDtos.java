@@ -13,10 +13,10 @@ public final class NotificationDtos {
     }
 
     public record NotificationView(UUID id, NotificationType type, String title, String body, boolean read,
-            Instant readAt, Instant createdAt) {
+            Instant readAt, Instant createdAt, NotificationPriority priority, String link) {
         public static NotificationView of(Notification n) {
             return new NotificationView(n.getId(), n.getType(), n.getTitle(), n.getBody(), n.getReadAt() != null,
-                    n.getReadAt(), n.getCreatedAt());
+                    n.getReadAt(), n.getCreatedAt(), n.getPriority(), n.getLink());
         }
     }
 

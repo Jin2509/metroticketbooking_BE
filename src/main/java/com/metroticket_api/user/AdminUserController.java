@@ -182,6 +182,8 @@ public class AdminUserController {
         user.changeStatus(req.status());
         if (req.status() == UserStatus.LOCKED) {
             refreshTokens.revokeAll(user.getId());
+            // Access token (JWT) vẫn hợp lệ tới khi hết hạn nếu không đưa vào denylist
+            denylist.revokeAllOfUserAfterCommit(user.getId());
             authEvents.recordByAdmin(user.getId(), AuthEventType.ACCOUNT_LOCKED);
             // Chỉ gửi email: tài khoản đã khoá thì không vào được app để đọc thông báo
             events.publishEvent(new MailRequested(mailTemplates.accountNotice(user.getEmail(), user.getFullName(),
@@ -203,6 +205,7 @@ public class AdminUserController {
         User user = loadManageable(id);
         user.changePassword(passwordEncoder.encode(req.newPassword()), clock.instant());
         refreshTokens.revokeAll(user.getId());
+        denylist.revokeAllOfUserAfterCommit(user.getId());
         loginAttempts.reset(user.getEmail());
         events.publishEvent(new MailRequested(mailTemplates.adminPasswordResetNotice(user.getEmail(), req.newPassword())));
         authEvents.recordByAdmin(user.getId(), AuthEventType.PASSWORD_RESET_BY_ADMIN);

@@ -16,6 +16,25 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 public class AsyncConfig {
 
     public static final String MAIL_EXECUTOR = "mailExecutor";
+    public static final String AI_EXECUTOR = "aiExecutor";
+
+    /**
+     * Pool riêng cho các lời gọi AI (mỗi lời gọi có thể mất hàng chục giây). Không dùng chung scheduler
+     * mặc định (1 thread) vì sẽ chặn các job khác như phát vị trí tàu mỗi giây.
+     */
+    @Bean(name = AI_EXECUTOR)
+    public ThreadPoolTaskExecutor aiExecutor(
+            @org.springframework.beans.factory.annotation.Value("${app.ai.gemini.concurrency:2}") int concurrency) {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(concurrency);
+        executor.setMaxPoolSize(concurrency);
+        executor.setQueueCapacity(0);
+        executor.setThreadNamePrefix("ai-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
+        executor.initialize();
+        return executor;
+    }
 
     @Bean(name = MAIL_EXECUTOR)
     public Executor mailExecutor() {

@@ -1,5 +1,6 @@
 package com.metroticket_api.security;
 
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.security.core.Authentication;
@@ -17,6 +18,19 @@ public final class CurrentUser {
             throw new IllegalStateException("Chưa đăng nhập");
         }
         return UUID.fromString(auth.getName());
+    }
+
+    /** Id người dùng hiện tại nếu đang có JWT hợp lệ; rỗng khi chạy ngoài request (job, test unit). */
+    public static Optional<UUID> optionalId() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || auth.getName() == null) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(UUID.fromString(auth.getName()));
+        } catch (IllegalArgumentException notUuid) {
+            return Optional.empty();
+        }
     }
 
     public static boolean hasAuthority(String authority) {
