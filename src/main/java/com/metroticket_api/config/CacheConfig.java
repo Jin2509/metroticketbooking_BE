@@ -57,6 +57,7 @@ public class CacheConfig {
     private static final class ExpiringCache implements Cache {
         private final String name;
         private final Duration ttl;
+        private static final int MAX_ENTRIES = 5_000;
         private final ConcurrentMap<Object, CacheEntry> entries = new ConcurrentHashMap<>();
 
         private ExpiringCache(String name, Duration ttl) {
@@ -114,7 +115,24 @@ public class CacheConfig {
 
         @Override
         public void put(Object key, Object value) {
+            ensureCapacity();
             entries.put(key, new CacheEntry(value, Instant.now().plus(ttl)));
+        }
+
+        /**
+         * Giới hạn số phần tử: khoá cache có thể đến từ tham số client, không giới hạn thì spam request làm tràn heap.
+         * Đầy thì dọn phần tử hết hạn trước, vẫn đầy thì bỏ phần tử sắp hết hạn nhất.
+         */
+        private void ensureCapacity() {
+            if (entries.size() < MAX_ENTRIES) {
+                return;
+            }
+            entries.entrySet().removeIf(e -> e.getValue().expired());
+            while (entries.size() >= MAX_ENTRIES) {
+                entries.entrySet().stream()
+                        .min(java.util.Comparator.comparing(e -> e.getValue().expiresAt()))
+                        .ifPresent(oldest -> entries.remove(oldest.getKey()));
+            }
         }
 
         @Override
@@ -124,6 +142,7 @@ public class CacheConfig {
                 return new ValueWrapperImpl(existing.value());
             }
             CacheEntry newEntry = new CacheEntry(value, Instant.now().plus(ttl));
+            ensureCapacity();
             entries.put(key, newEntry);
             return new ValueWrapperImpl(value);
         }

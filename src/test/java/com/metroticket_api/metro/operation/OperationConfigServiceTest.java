@@ -68,13 +68,13 @@ class OperationConfigServiceTest {
             List<Train> readyTrains = readyTrains();
             when(trains.findByLineId(1L)).thenReturn(readyTrains);
             service = new OperationConfigService(configs, lines, trains, lineStations,
-                    mock(WorkflowEngineService.class));
+                    mock(WorkflowEngineService.class), java.time.Clock.systemUTC());
         }
 
         private CreateOperationConfigRequest request(int headwayMinutes) {
             return new CreateOperationConfigRequest(1L, 5, headwayMinutes, 30, 5,
                     LocalTime.of(5, 0), LocalTime.of(22, 0), Instant.parse("2024-12-21T17:00:00Z"),
-                    null, null);
+                    null);
         }
 
         private List<LineStation> route() {

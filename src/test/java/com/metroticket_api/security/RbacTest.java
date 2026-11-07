@@ -81,7 +81,7 @@ class RbacTest {
         mvc.perform(get("/api/admin/roles").with(as("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[?(@.code=='STAFF')].permissions[*]").value(
-                        org.hamcrest.Matchers.containsInAnyOrder("TICKET_VALIDATE", "TICKET_VIEW_ALL", "TICKET_VIEW_OWN")));
+                        org.hamcrest.Matchers.containsInAnyOrder("TICKET_VALIDATE", "TICKET_VIEW_ALL", "TICKET_VIEW_OWN", "PARKING_OPERATE", "ANNOUNCEMENT_MANAGE")));
     }
 
     @Test

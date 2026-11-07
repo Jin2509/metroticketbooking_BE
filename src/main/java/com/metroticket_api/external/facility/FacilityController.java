@@ -2,6 +2,9 @@ package com.metroticket_api.external.facility;
 
 import java.util.List;
 
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -25,7 +28,7 @@ public class FacilityController {
     public List<FacilityDto> getFacilities(
             @PathVariable Long stationId,
             @RequestParam(required = false) FacilityCategory category,
-            @RequestParam(defaultValue = "500") int radiusMeters) {
+            @RequestParam(defaultValue = "500") @Min(50) @Max(3000) int radiusMeters) {
         return service.getNearbyFacilities(stationId, category, radiusMeters);
     }
 }

@@ -1,6 +1,12 @@
 package com.metroticket_api.external.bus;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import java.util.List;
 
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,18 +35,20 @@ public class BusController {
 
     @GetMapping("/bus/stops/nearby")
     public List<BusStopDto> getNearbyStops(
-            @RequestParam BigDecimal lat,
-            @RequestParam BigDecimal lng,
-            @RequestParam(defaultValue = "1.0") double radiusKm,
-            @RequestParam(defaultValue = "10") int limit) {
-        return service.getNearbyStops(lat, lng, radiusKm, limit);
+            @RequestParam @DecimalMin("-90") @DecimalMax("90") BigDecimal lat,
+            @RequestParam @DecimalMin("-180") @DecimalMax("180") BigDecimal lng,
+            @RequestParam(defaultValue = "1.0") @DecimalMin("0.1") @DecimalMax("5") double radiusKm,
+            @RequestParam(defaultValue = "10") @Min(1) @Max(50) int limit) {
+        // Làm tròn ~100 m: khoá cache hữu hạn, client không thể spam toạ độ để gọi API ngoài liên tục
+        return service.getNearbyStops(lat.setScale(3, RoundingMode.HALF_UP), lng.setScale(3, RoundingMode.HALF_UP),
+                radiusKm, limit);
     }
 
     @GetMapping("/stations/{stationId}/bus")
     public List<BusStopDto> getNearestBusForStation(
             @PathVariable Long stationId,
-            @RequestParam(defaultValue = "1.0") double radiusKm,
-            @RequestParam(defaultValue = "10") int limit) {
+            @RequestParam(defaultValue = "1.0") @DecimalMin("0.1") @DecimalMax("5") double radiusKm,
+            @RequestParam(defaultValue = "10") @Min(1) @Max(50) int limit) {
         return service.getNearbyStops(stationId, radiusKm, limit);
     }
 }

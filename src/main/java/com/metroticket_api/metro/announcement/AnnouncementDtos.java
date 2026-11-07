@@ -3,36 +3,41 @@ package com.metroticket_api.metro.announcement;
 import java.time.Instant;
 import java.util.UUID;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+
 import com.metroticket_api.metro.common.AnnouncementScope;
 import com.metroticket_api.metro.common.AnnouncementSeverity;
 import com.metroticket_api.metro.common.AnnouncementStatus;
 
 public class AnnouncementDtos {
 
+    /** Người tạo lấy từ JWT. */
     public record CreateAnnouncementRequest(
             Long lineId,
             Long stationId,
-            String title,
-            String content,
+            @NotBlank @Size(max = 200) String title,
+            @NotBlank @Size(max = 10_000) String content,
             AnnouncementSeverity severity,
             Instant startsAt,
             Instant endsAt,
             AnnouncementScope scope,
-            String targetRole,
-            UUID createdBy) {
+            @Size(max = 50) String targetRole) {
     }
 
     public record UpdateAnnouncementRequest(
             Long lineId,
             Long stationId,
-            String title,
-            String content,
+            @Size(max = 200) String title,
+            @Size(max = 10_000) String content,
             AnnouncementSeverity severity,
             Instant startsAt,
             Instant endsAt,
             AnnouncementScope scope,
-            String targetRole,
-            UUID createdBy) {
+            @Size(max = 50) String targetRole) {
+    }
+
+    public record RejectAnnouncementRequest(@NotBlank @Size(max = 1000) String reason) {
     }
 
     public record AnnouncementResponse(

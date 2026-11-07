@@ -17,6 +17,20 @@ public final class PermissionCodes {
     public static final String USER_MANAGE = "USER_MANAGE";
     public static final String RBAC_MANAGE = "RBAC_MANAGE";
     public static final String NOTIFICATION_MANAGE = "NOTIFICATION_MANAGE";
+    public static final String TRAIN_MANAGE = "TRAIN_MANAGE";
+    public static final String OPERATION_MANAGE = "OPERATION_MANAGE";
+    public static final String OPERATION_APPROVE = "OPERATION_APPROVE";
+    public static final String FARE_MANAGE = "FARE_MANAGE";
+    public static final String PARKING_OPERATE = "PARKING_OPERATE";
+    public static final String PARKING_MANAGE = "PARKING_MANAGE";
+    public static final String PARKING_BUY = "PARKING_BUY";
+    public static final String ANNOUNCEMENT_MANAGE = "ANNOUNCEMENT_MANAGE";
+    public static final String ANNOUNCEMENT_APPROVE = "ANNOUNCEMENT_APPROVE";
+    public static final String CONTENT_MANAGE = "CONTENT_MANAGE";
+    public static final String PAYMENT_MANAGE = "PAYMENT_MANAGE";
+    public static final String STUDENT_VERIFY = "STUDENT_VERIFY";
+    public static final String STUDENT_POLICY_MANAGE = "STUDENT_POLICY_MANAGE";
+    public static final String GREEN_JOURNEY_MANAGE = "GREEN_JOURNEY_MANAGE";
 
     private PermissionCodes() {
     }

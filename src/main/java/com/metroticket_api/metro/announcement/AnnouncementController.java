@@ -6,6 +6,7 @@ import java.util.UUID;
 import jakarta.validation.Valid;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -73,13 +74,14 @@ public class AnnouncementController {
     @Operation(summary = "Xem chi tiết announcement", description = "Lấy thông tin chi tiết một announcement theo ID.")
     @GetMapping("/announcements/{id}")
     public AnnouncementResponse get(@PathVariable Long id) {
-        return AnnouncementResponse.of(service.getById(id));
+        return service.get(id);
     }
 
     /**
      * Tạo một thông báo mới ở trạng thái nháp, có thể kèm tuyến hoặc ga liên quan.
      */
     @Operation(summary = "Tạo announcement mới", description = "Tạo announcement ở trạng thái DRAFT, chưa được phê duyệt.")
+    @PreAuthorize("hasAuthority('ANNOUNCEMENT_MANAGE')")
     @PostMapping("/announcements")
     @ResponseStatus(HttpStatus.CREATED)
     public AnnouncementResponse create(@Valid @RequestBody CreateAnnouncementRequest request) {
@@ -90,6 +92,7 @@ public class AnnouncementController {
      * Chỉnh sửa nội dung thông báo trước khi gửi duyệt hoặc phát hành.
      */
     @Operation(summary = "Cập nhật announcement", description = "Chỉ cho phép sửa bản ở trạng thái DRAFT. Nếu đã APPROVED, phải tạo bản mới để chỉnh sửa.")
+    @PreAuthorize("hasAuthority('ANNOUNCEMENT_MANAGE')")
     @PutMapping("/announcements/{id}")
     public AnnouncementResponse update(@PathVariable Long id, @Valid @RequestBody UpdateAnnouncementRequest request) {
         return service.update(id, request);
@@ -99,6 +102,7 @@ public class AnnouncementController {
      * Gửi thông báo lên quy trình duyệt để admin hoặc quản lý kiểm tra.
      */
     @Operation(summary = "Gửi duyệt announcement", description = "Chuyển trạng thái DRAFT -> PENDING_APPROVAL.")
+    @PreAuthorize("hasAuthority('ANNOUNCEMENT_MANAGE')")
     @PostMapping("/announcements/{id}/submit")
     public AnnouncementResponse submit(@PathVariable Long id) {
         return service.submit(id);
@@ -108,18 +112,21 @@ public class AnnouncementController {
      * Phê duyệt thông báo để chuyển sang trạng thái đã duyệt và sẵn sàng phát hành.
      */
     @Operation(summary = "Phê duyệt announcement", description = "Chuyển trạng thái PENDING_APPROVAL -> APPROVED.")
+    @PreAuthorize("hasAuthority('ANNOUNCEMENT_APPROVE')")
     @PostMapping("/announcements/{id}/approve")
-    public AnnouncementResponse approve(@PathVariable Long id, @RequestParam UUID approvedBy) {
-        return service.approve(id, approvedBy);
+    public AnnouncementResponse approve(@PathVariable Long id) {
+        return service.approve(id);
     }
 
     /**
      * Từ chối thông báo và lưu lý do, giúp người tạo biết điểm cần chỉnh sửa.
      */
     @Operation(summary = "Từ chối announcement", description = "Chuyển trạng thái PENDING_APPROVAL -> REJECTED và lưu lý do từ chối.")
+    @PreAuthorize("hasAuthority('ANNOUNCEMENT_APPROVE')")
     @PostMapping("/announcements/{id}/reject")
-    public AnnouncementResponse reject(@PathVariable Long id, @RequestParam String reason) {
-        return service.reject(id, reason);
+    public AnnouncementResponse reject(@PathVariable Long id,
+            @Valid @RequestBody AnnouncementDtos.RejectAnnouncementRequest request) {
+        return service.reject(id, request.reason());
     }
 
 }

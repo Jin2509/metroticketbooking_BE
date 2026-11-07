@@ -36,6 +36,19 @@ public class Notification {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 10)
+    private NotificationPriority priority = NotificationPriority.NORMAL;
+
+    @Column(length = 300)
+    private String link;
+
+    @Column(name = "campaign_id")
+    private UUID campaignId;
+
+    @Column(name = "dedupe_key", length = 150)
+    private String dedupeKey;
+
     protected Notification() {
         // cho JPA
     }
@@ -47,6 +60,14 @@ public class Notification {
         this.title = title;
         this.body = body;
         this.createdAt = now;
+    }
+
+    public Notification(UUID userId, NotificationType type, String title, String body, Instant now,
+            NotificationPriority priority, String link, String dedupeKey) {
+        this(userId, type, title, body, now);
+        this.priority = priority == null ? NotificationPriority.NORMAL : priority;
+        this.link = link;
+        this.dedupeKey = dedupeKey;
     }
 
     public void markRead(Instant now) {
@@ -61,4 +82,9 @@ public class Notification {
     public String getBody() { return body; }
     public Instant getReadAt() { return readAt; }
     public Instant getCreatedAt() { return createdAt; }
+    public UUID getUserId() { return userId; }
+    public NotificationPriority getPriority() { return priority; }
+    public String getLink() { return link; }
+    public UUID getCampaignId() { return campaignId; }
+    public String getDedupeKey() { return dedupeKey; }
 }

@@ -272,6 +272,7 @@ public class AuthService {
         users.findByEmail(email).ifPresent(u -> {
             u.changePassword(passwordEncoder.encode(newPassword), clock.instant());
             refreshTokens.revokeAll(u.getId());
+            denylist.revokeAllOfUserAfterCommit(u.getId());
             loginAttempts.reset(email);
             authEvents.record(u.getId(), AuthEventType.PASSWORD_RESET);
             notifications.notifyWithEmail(u, NotificationType.SECURITY, "Mật khẩu đã được đặt lại",

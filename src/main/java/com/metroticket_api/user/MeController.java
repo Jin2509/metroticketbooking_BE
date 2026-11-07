@@ -35,6 +35,7 @@ import com.metroticket_api.mail.MailTemplates;
 import com.metroticket_api.notification.NotificationService;
 import com.metroticket_api.notification.NotificationType;
 import com.metroticket_api.rbac.RolePermissionCache;
+import com.metroticket_api.security.AccessTokenDenylist;
 import com.metroticket_api.security.CurrentUser;
 import com.metroticket_api.user.UserDtos.MeView;
 import com.metroticket_api.verification.VerificationCodeService;
@@ -57,12 +58,15 @@ public class MeController {
     private final AuthEventService authEvents;
     private final NotificationService notifications;
     private final Clock clock;
+    private final AccessTokenDenylist denylist;
 
     public MeController(UserRepository users, RolePermissionCache rolePermissions,
             RefreshTokenService refreshTokens, PasswordEncoder passwordEncoder,
             VerificationCodeService verification, LoginAttemptLimiter loginAttempts,
             ApplicationEventPublisher events, MailTemplates mailTemplates,
-            AuthEventService authEvents, NotificationService notifications, Clock clock) {
+            AuthEventService authEvents, NotificationService notifications, Clock clock,
+            AccessTokenDenylist denylist) {
+        this.denylist = denylist;
         this.users = users;
         this.rolePermissions = rolePermissions;
         this.refreshTokens = refreshTokens;
@@ -137,6 +141,7 @@ public class MeController {
         user.changeEmail(newEmail);
         users.flush(); // bắt vi phạm unique khi 2 người cùng xác nhận một email
         refreshTokens.revokeAll(user.getId());
+        denylist.revokeAllOfUserAfterCommit(user.getId());
         events.publishEvent(new MailRequested(mailTemplates.emailChangedNotice(oldEmail, newEmail)));
         authEvents.record(user.getId(), AuthEventType.EMAIL_CHANGED);
         notifications.notify(user.getId(), NotificationType.SECURITY, "Email đăng nhập đã được đổi",
@@ -153,6 +158,7 @@ public class MeController {
         requireCurrentPassword(user, req.currentPassword());
         user.changePassword(passwordEncoder.encode(req.newPassword()), clock.instant());
         refreshTokens.revokeAll(user.getId());
+        denylist.revokeAllOfUserAfterCommit(user.getId());
         authEvents.record(user.getId(), AuthEventType.PASSWORD_CHANGED);
         notifications.notifyWithEmail(user, NotificationType.SECURITY, "Mật khẩu đã được đổi",
                 "Mật khẩu của bạn vừa được đổi. Nếu không phải bạn, hãy liên hệ quản trị viên ngay.");

@@ -36,6 +36,8 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 public class SecurityConfig {
 
     static final String AUTH_PATH = "/api/auth/";
+    static final String PUBLIC_PATH = "/api/v1/public/";
+    static final String SEPAY_WEBHOOK_PATH = "/api/v1/payments/sepay/webhook";
 
     @Bean
     public SecurityFilterChain apiSecurity(HttpSecurity http, RoleAuthoritiesConverter authoritiesConverter)
@@ -54,8 +56,11 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                 .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**", "/webjars/**").permitAll()
                 .requestMatchers("/ws/lines/**").permitAll()
-                .requestMatchers(HttpMethod.GET, "/api/v1/public/lines/*/stations").permitAll()
+                // Bản đồ, tìm đường, giờ tàu, giá vé, loại vé, bãi xe: tra cứu công khai (chỉ GET)
+                .requestMatchers(HttpMethod.GET, "/api/v1/public/**").permitAll()
                 .requestMatchers(HttpMethod.POST, AUTH_PATH + "**").permitAll()
+                // SePay gọi webhook không có JWT; xác thực bằng API key/HMAC trong SepayWebhookController
+                .requestMatchers(HttpMethod.POST, SEPAY_WEBHOOK_PATH).permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/content/banners", "/api/content/banners/*/image").permitAll()
                 .requestMatchers("/api/**").authenticated()
                 .anyRequest().denyAll())
@@ -73,12 +78,18 @@ public class SecurityConfig {
      * Không đọc Bearer token ở /api/auth/** (các API công khai): nếu không, client gửi kèm
      * access token đã hết hạn khi login/refresh/logout sẽ bị 401 oan.
      * Logout tự đọc header Authorization để thu hồi access token (xem AuthController).
+     * Tương tự với GET /api/v1/public/** (bản đồ, giá vé...).
      */
     private static BearerTokenResolver bearerTokenResolver() {
         DefaultBearerTokenResolver delegate = new DefaultBearerTokenResolver();
-        return request -> request.getRequestURI().startsWith(request.getContextPath() + AUTH_PATH)
-                ? null
-                : delegate.resolve(request);
+        return request -> {
+            String uri = request.getRequestURI();
+            String context = request.getContextPath();
+            boolean publicGet = "GET".equalsIgnoreCase(request.getMethod()) && uri.startsWith(context + PUBLIC_PATH);
+            // Header Authorization của webhook là "Apikey ...", không phải Bearer JWT
+            boolean webhook = uri.equals(context + SEPAY_WEBHOOK_PATH);
+            return uri.startsWith(context + AUTH_PATH) || publicGet || webhook ? null : delegate.resolve(request);
+        };
     }
 
     @Bean

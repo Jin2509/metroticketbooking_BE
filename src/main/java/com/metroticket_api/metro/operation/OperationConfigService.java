@@ -1,34 +1,49 @@
 package com.metroticket_api.metro.operation;
 
+import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalTime;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
-import java.util.Optional;
+import java.util.Objects;
+import java.util.UUID;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.metroticket_api.metro.common.MetroLineStatus;
 import com.metroticket_api.metro.common.OperationConfigStatus;
-import com.metroticket_api.metro.common.TrainStatus;
 import com.metroticket_api.metro.line.MetroLine;
 import com.metroticket_api.metro.line.MetroLineRepository;
-import com.metroticket_api.metro.station.LineStation;
-import com.metroticket_api.metro.station.LineStationRepository;
-import com.metroticket_api.metro.train.Train;
-import com.metroticket_api.metro.train.TrainRepository;
 import com.metroticket_api.metro.operation.OperationConfigDtos.CreateOperationConfigRequest;
 import com.metroticket_api.metro.operation.OperationConfigDtos.OperationConfigResponse;
 import com.metroticket_api.metro.operation.OperationConfigDtos.UpdateOperationConfigRequest;
+import com.metroticket_api.metro.station.LineStation;
+import com.metroticket_api.metro.station.LineStationRepository;
+import com.metroticket_api.metro.train.TrainRepository;
+import com.metroticket_api.security.CurrentUser;
 import com.metroticket_api.workflow.WorkflowEngineService;
 import com.metroticket_api.workflow.WorkflowEntityType;
 
 /**
- * Service xử lý cấu hình vận hành tuyến Metro.
+ * Cấu hình vận hành theo phiên bản (versioned) của tuyến, quy trình maker-checker:
  *
- * <p>Class này chịu trách nhiệm lưu lại phiên bản cấu hình, xác thực dữ liệu đầu vào và thực hiện quy trình
- * submit/approve/reject/activate theo mô hình quản lý vận hành Metro chuẩn.</p>
+ * <pre>
+ * DRAFT ──submit──▶ PENDING_APPROVAL ──approve──▶ APPROVED ──activate──▶ ACTIVE ⇄ INACTIVE
+ *   ▲                      │reject                    │deactivate
+ *   └──── sửa (update) ── REJECTED                    ▼
+ *                                                 INACTIVE
+ * </pre>
+ *
+ * <ul>
+ *   <li>Người tạo/duyệt lấy từ JWT. Người duyệt phải khác người soạn (four-eyes).</li>
+ *   <li>Sửa bản APPROVED/ACTIVE/INACTIVE không ghi đè mà sinh bản DRAFT mới version = max + 1.</li>
+ *   <li>Mỗi tuyến tối đa 1 bản ACTIVE (có partial unique index ở DB). Kích hoạt bản mới tự chuyển bản ACTIVE cũ
+ *       sang INACTIVE trong cùng transaction.</li>
+ *   <li>Mô hình lịch chạy: number_of_trains × headway = 2 × (running_time + turnaround) (một vòng khứ hồi).</li>
+ * </ul>
  */
 @Service
 public class OperationConfigService {
@@ -38,63 +53,57 @@ public class OperationConfigService {
     private final TrainRepository trains;
     private final LineStationRepository lineStations;
     private final WorkflowEngineService workflowEngine;
+    private final Clock clock;
 
     public OperationConfigService(OperationConfigRepository configs, MetroLineRepository lines, TrainRepository trains,
-            LineStationRepository lineStations, WorkflowEngineService workflowEngine) {
+            LineStationRepository lineStations, WorkflowEngineService workflowEngine, Clock clock) {
         this.configs = configs;
         this.lines = lines;
         this.trains = trains;
         this.lineStations = lineStations;
         this.workflowEngine = workflowEngine;
+        this.clock = clock;
     }
 
-    /**
-     * Liệt kê cấu hình vận hành của một tuyến theo thời điểm hiệu lực giảm dần để thuận tiện cho người duyệt xem phiên bản mới nhất trước.
-     */
     @Transactional(readOnly = true)
     public List<OperationConfigResponse> listByLine(Long lineId) {
-        return configs.findByLineIdOrderByEffectiveFromDesc(lineId).stream().map(OperationConfigResponse::of).toList();
+        if (!lines.existsById(lineId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy tuyến");
+        }
+        return configs.findByLineIdOrderByEffectiveFromDesc(lineId).stream()
+                .sorted(Comparator.comparing(OperationConfig::getVersion).reversed())
+                .map(OperationConfigResponse::of)
+                .toList();
     }
 
-    /**
-     * Lấy toàn bộ cấu hình vận hành trên hệ thống, phục vụ tra cứu và dashboard quản lý.
-     */
     @Transactional(readOnly = true)
-    public List<OperationConfigResponse> listAll() {
-        return configs.findAll().stream().map(OperationConfigResponse::of).toList();
+    public List<OperationConfigResponse> listAll(OperationConfigStatus status) {
+        List<OperationConfig> result = status == null ? configs.findAll() : configs.findByStatusOrderByLineIdAscVersionDesc(status);
+        return result.stream().map(OperationConfigResponse::of).toList();
     }
 
-    /**
-     * Tìm cấu hình theo ID để thực hiện submit, approve, reject hoặc activate trong quy trình quản lý vận hành.
-     */
     @Transactional(readOnly = true)
     public OperationConfig getById(Long id) {
         return configs.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy cấu hình vận hành"));
     }
 
-    /**
-     * Tạo một bản cấu hình vận hành mới cho tuyến. Version được tính tự động theo phiên bản cao nhất hiện tại của tuyến + 1.
-     */
+    @Transactional(readOnly = true)
+    public OperationConfigResponse get(Long id) {
+        return OperationConfigResponse.of(getById(id));
+    }
+
     @Transactional
     public OperationConfigResponse create(Long lineId, CreateOperationConfigRequest request) {
-        MetroLine line = lines.findById(lineId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Không tìm thấy tuyến"));
-
         if (request == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Yêu cầu cấu hình vận hành không được rỗng");
         }
-        validateConfigValues(lineId, request.numberOfTrains(), request.headwayMinutes(), request.runningTimeMinutes(),
-                request.turnaroundTimeMinutes(), request.startTime(), request.endTime(), request.effectiveFrom(),
-                request.effectiveTo());
-
-        Integer nextVersion = configs.findTopByLineIdOrderByVersionDesc(lineId)
-                .map(OperationConfig::getVersion)
-                .orElse(0) + 1;
+        MetroLine line = lines.findById(lineId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy tuyến"));
 
         OperationConfig config = new OperationConfig(
                 line,
-                nextVersion,
+                nextVersion(lineId),
                 request.numberOfTrains(),
                 request.headwayMinutes(),
                 request.runningTimeMinutes(),
@@ -103,123 +112,136 @@ public class OperationConfigService {
                 request.endTime(),
                 request.effectiveFrom(),
                 request.effectiveTo(),
-                request.createdBy(),
+                CurrentUser.optionalId().orElse(null),
                 OperationConfigStatus.DRAFT);
+        validateConfigValues(config);
         validateOperationalFeasibility(config);
         return OperationConfigResponse.of(configs.save(config));
     }
 
     /**
-     * Cập nhật cấu hình hiện có để sửa phiên bản, thời lượng hoặc khoảng cách giữa các chuyến tàu.
-     * Nếu bản hiện tại đã được phê duyệt, tạo một bản mới ở trạng thái DRAFT với version tăng lên để tránh sửa trực tiếp bản hiệu lực.
+     * DRAFT: sửa trực tiếp. REJECTED: sửa trực tiếp và đưa về DRAFT để gửi duyệt lại.
+     * APPROVED/ACTIVE/INACTIVE: không sửa bản đã duyệt mà tạo bản DRAFT mới (version = max + 1).
+     * PENDING_APPROVAL: khoá, không cho sửa.
      */
     @Transactional
     public OperationConfigResponse update(Long configId, UpdateOperationConfigRequest request) {
-        OperationConfig config = getById(configId);
-
         if (request == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Yêu cầu cập nhật cấu hình không được rỗng");
         }
+        OperationConfig config = getById(configId);
+        OperationConfigStatus status = config.getStatus();
 
-        if (config.getStatus() == OperationConfigStatus.PENDING_APPROVAL) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Không thể sửa cấu hình đang chờ phê duyệt");
+        if (status == OperationConfigStatus.PENDING_APPROVAL) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Không thể sửa cấu hình đang chờ phê duyệt");
         }
 
-        if (config.getStatus() == OperationConfigStatus.APPROVED || config.getStatus() == OperationConfigStatus.ACTIVE
-                || config.getStatus() == OperationConfigStatus.INACTIVE) {
-            OperationConfig draft = new OperationConfig(
+        OperationConfig target;
+        if (status == OperationConfigStatus.APPROVED || status == OperationConfigStatus.ACTIVE
+                || status == OperationConfigStatus.INACTIVE) {
+            target = new OperationConfig(
                     config.getLine(),
-                    (config.getVersion() == null ? 0 : config.getVersion()) + 1,
-                    request.numberOfTrains() != null ? request.numberOfTrains() : config.getNumberOfTrains(),
-                    request.headwayMinutes() != null ? request.headwayMinutes() : config.getHeadwayMinutes(),
-                    request.runningTimeMinutes() != null ? request.runningTimeMinutes() : config.getRunningTimeMinutes(),
-                    request.turnaroundTimeMinutes() != null ? request.turnaroundTimeMinutes() : config.getTurnaroundTimeMinutes(),
-                    request.startTime() != null ? request.startTime() : config.getStartTime(),
-                    request.endTime() != null ? request.endTime() : config.getEndTime(),
-                    request.effectiveFrom() != null ? request.effectiveFrom() : config.getEffectiveFrom(),
-                    request.effectiveTo() != null ? request.effectiveTo() : config.getEffectiveTo(),
-                    request.createdBy() != null ? request.createdBy() : config.getCreatedBy(),
+                    nextVersion(config.getLine().getId()),
+                    config.getNumberOfTrains(),
+                    config.getHeadwayMinutes(),
+                    config.getRunningTimeMinutes(),
+                    config.getTurnaroundTimeMinutes(),
+                    config.getStartTime(),
+                    config.getEndTime(),
+                    config.getEffectiveFrom(),
+                    config.getEffectiveTo(),
+                    CurrentUser.optionalId().orElse(config.getCreatedBy()),
                     OperationConfigStatus.DRAFT);
-            draft.setApprovedBy(null);
-            draft.setApprovedAt(null);
-            draft.setSubmittedAt(null);
-            draft.setRejectionReason(null);
-            validateOperationalFeasibility(draft);
-            return OperationConfigResponse.of(configs.save(draft));
+        } else {
+            target = config;
+            if (status == OperationConfigStatus.REJECTED) {
+                workflowEngine.ensureTransitionAllowed(WorkflowEntityType.OPERATION_CONFIG,
+                        status.name(), OperationConfigStatus.DRAFT.name());
+                target.setStatus(OperationConfigStatus.DRAFT);
+                target.setRejectionReason(null);
+                target.setSubmittedAt(null);
+            }
         }
 
-        if (request.numberOfTrains() != null) config.setNumberOfTrains(request.numberOfTrains());
-        if (request.headwayMinutes() != null) config.setHeadwayMinutes(request.headwayMinutes());
-        if (request.runningTimeMinutes() != null) config.setRunningTimeMinutes(request.runningTimeMinutes());
-        if (request.turnaroundTimeMinutes() != null) config.setTurnaroundTimeMinutes(request.turnaroundTimeMinutes());
-        if (request.startTime() != null) config.setStartTime(request.startTime());
-        if (request.endTime() != null) config.setEndTime(request.endTime());
-        if (request.effectiveFrom() != null) config.setEffectiveFrom(request.effectiveFrom());
-        if (request.effectiveTo() != null) config.setEffectiveTo(request.effectiveTo());
-        if (request.createdBy() != null) config.setCreatedBy(request.createdBy());
-        validateOperationalFeasibility(config);
-        return OperationConfigResponse.of(configs.save(config));
+        applyChanges(target, request);
+        validateConfigValues(target);
+        validateOperationalFeasibility(target);
+        return OperationConfigResponse.of(configs.save(target));
     }
 
-    /**
-     * Quy trình duyệt cấu hình vận hành: Draft -> PendingApproval -> Approved/Rejected.
-     * Khi đã được phê duyệt, cấu hình mới được coi là phiên bản hiệu lực hiện tại của tuyến.
-     */
     @Transactional
     public OperationConfigResponse submit(Long configId) {
         OperationConfig config = getById(configId);
-        workflowEngine.ensureTransitionAllowed(
-                WorkflowEntityType.OPERATION_CONFIG,
-                config.getStatus().name(),
-                OperationConfigStatus.PENDING_APPROVAL.name());
+        workflowEngine.ensureTransitionAllowed(WorkflowEntityType.OPERATION_CONFIG,
+                config.getStatus().name(), OperationConfigStatus.PENDING_APPROVAL.name());
+        validateConfigValues(config);
         validateOperationalFeasibility(config);
         config.setStatus(OperationConfigStatus.PENDING_APPROVAL);
-        config.setSubmittedAt(Instant.now());
+        config.setSubmittedAt(clock.instant());
         return OperationConfigResponse.of(configs.save(config));
     }
 
-    /**
-     * Phê duyệt cấu hình và ghi nhận người phê duyệt cũng như thời điểm thực thi.
-     */
     @Transactional
-    public OperationConfigResponse approve(Long configId, java.util.UUID approvedBy) {
+    public OperationConfigResponse approve(Long configId) {
         OperationConfig config = getById(configId);
-        workflowEngine.ensureTransitionAllowed(
-                WorkflowEntityType.OPERATION_CONFIG,
-                config.getStatus().name(),
-                OperationConfigStatus.APPROVED.name());
+        workflowEngine.ensureTransitionAllowed(WorkflowEntityType.OPERATION_CONFIG,
+                config.getStatus().name(), OperationConfigStatus.APPROVED.name());
+        UUID approver = CurrentUser.optionalId().orElse(null);
+        ensureNotSelfReview(config, approver);
         validateOperationalFeasibility(config);
-        config.setApprovedBy(approvedBy);
-        config.setApprovedAt(Instant.now());
+        config.setApprovedBy(approver);
+        config.setApprovedAt(clock.instant());
         config.setStatus(OperationConfigStatus.APPROVED);
         config.setRejectionReason(null);
         return OperationConfigResponse.of(configs.save(config));
     }
 
-    /**
-     * Từ chối cấu hình và giữ nguyên nhân từ chối để người tạo có thể sửa lại.
-     */
     @Transactional
     public OperationConfigResponse reject(Long configId, String reason) {
+        if (reason == null || reason.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Phải nhập lý do từ chối");
+        }
         OperationConfig config = getById(configId);
-        workflowEngine.ensureTransitionAllowed(
-                WorkflowEntityType.OPERATION_CONFIG,
-                config.getStatus().name(),
-                OperationConfigStatus.REJECTED.name());
+        workflowEngine.ensureTransitionAllowed(WorkflowEntityType.OPERATION_CONFIG,
+                config.getStatus().name(), OperationConfigStatus.REJECTED.name());
+        UUID reviewer = CurrentUser.optionalId().orElse(null);
+        ensureNotSelfReview(config, reviewer);
         config.setStatus(OperationConfigStatus.REJECTED);
-        config.setRejectionReason(reason);
+        config.setRejectionReason(reason.trim());
+        config.setApprovedBy(reviewer);
+        config.setApprovedAt(null);
         return OperationConfigResponse.of(configs.save(config));
     }
 
+    /**
+     * Kích hoạt (go-live). Kiểm tra lại tính khả thi tại thời điểm kích hoạt (số tàu sẵn sàng có thể đã đổi),
+     * khung hiệu lực phải bao thời điểm hiện tại, rồi thay thế bản ACTIVE cũ của tuyến.
+     */
     @Transactional
     public OperationConfigResponse activate(Long configId) {
         OperationConfig config = getById(configId);
-        workflowEngine.ensureTransitionAllowed(
-                WorkflowEntityType.OPERATION_CONFIG,
-                config.getStatus().name(),
-                OperationConfigStatus.ACTIVE.name());
-        ensureOnlyOneActiveConfigForLine(config.getLine().getId(), config.getId());
+        workflowEngine.ensureTransitionAllowed(WorkflowEntityType.OPERATION_CONFIG,
+                config.getStatus().name(), OperationConfigStatus.ACTIVE.name());
+        if (config.getLine().getStatus() != MetroLineStatus.ACTIVE) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Tuyến không ở trạng thái ACTIVE, không thể kích hoạt lịch chạy");
+        }
+        Instant now = clock.instant();
+        if (config.getEffectiveFrom().isAfter(now)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Cấu hình chưa đến ngày hiệu lực (effective_from)");
+        }
+        if (config.getEffectiveTo() != null && !config.getEffectiveTo().isAfter(now)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Cấu hình đã hết hiệu lực (effective_to)");
+        }
+        validateOperationalFeasibility(config);
+
+        List<OperationConfig> currentActive = configs.findByLineIdAndStatus(config.getLine().getId(), OperationConfigStatus.ACTIVE);
+        for (OperationConfig previous : currentActive) {
+            if (!previous.getId().equals(config.getId())) {
+                previous.setStatus(OperationConfigStatus.INACTIVE);
+                // flush trước để không vi phạm partial unique index "1 ACTIVE / tuyến"
+                configs.saveAndFlush(previous);
+            }
+        }
         config.setStatus(OperationConfigStatus.ACTIVE);
         return OperationConfigResponse.of(configs.save(config));
     }
@@ -227,67 +249,44 @@ public class OperationConfigService {
     @Transactional
     public OperationConfigResponse deactivate(Long configId) {
         OperationConfig config = getById(configId);
-        workflowEngine.ensureTransitionAllowed(
-                WorkflowEntityType.OPERATION_CONFIG,
-                config.getStatus().name(),
-                OperationConfigStatus.INACTIVE.name());
+        workflowEngine.ensureTransitionAllowed(WorkflowEntityType.OPERATION_CONFIG,
+                config.getStatus().name(), OperationConfigStatus.INACTIVE.name());
         config.setStatus(OperationConfigStatus.INACTIVE);
         return OperationConfigResponse.of(configs.save(config));
     }
 
-    private void validateConfigValues(Long lineId, Integer numberOfTrains, Integer headwayMinutes, Integer runningTimeMinutes,
-            Integer turnaroundTimeMinutes, java.time.LocalTime startTime, java.time.LocalTime endTime,
-            Instant effectiveFrom, Instant effectiveTo) {
-        if (lineId == null || lineId <= 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "lineId không hợp lệ");
-        }
-        if (numberOfTrains == null || numberOfTrains <= 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "number_of_trains phải lớn hơn 0");
-        }
-        if (headwayMinutes == null || headwayMinutes <= 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "headway_minutes phải lớn hơn 0");
-        }
-        if (runningTimeMinutes == null || runningTimeMinutes <= 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "running_time_minutes phải lớn hơn 0");
-        }
-        if (turnaroundTimeMinutes != null && turnaroundTimeMinutes < 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "turnaround_time_minutes không được âm");
-        }
-        if (startTime == null || endTime == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "start_time và end_time không được để trống");
-        }
-        if (effectiveFrom == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "effective_from không được để trống");
-        }
-        if (effectiveTo != null && effectiveTo.isBefore(effectiveFrom)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "effective_to phải lớn hơn hoặc bằng effective_from");
+    private int nextVersion(Long lineId) {
+        return configs.findTopByLineIdOrderByVersionDesc(lineId)
+                .map(OperationConfig::getVersion)
+                .orElse(0) + 1;
+    }
+
+    private static void applyChanges(OperationConfig config, UpdateOperationConfigRequest request) {
+        if (request.numberOfTrains() != null) config.setNumberOfTrains(request.numberOfTrains());
+        if (request.headwayMinutes() != null) config.setHeadwayMinutes(request.headwayMinutes());
+        if (request.runningTimeMinutes() != null) config.setRunningTimeMinutes(request.runningTimeMinutes());
+        if (request.turnaroundTimeMinutes() != null) config.setTurnaroundTimeMinutes(request.turnaroundTimeMinutes());
+        if (request.startTime() != null) config.setStartTime(request.startTime());
+        if (request.endTime() != null) config.setEndTime(request.endTime());
+        if (request.effectiveFrom() != null) config.setEffectiveFrom(request.effectiveFrom());
+        if (Boolean.TRUE.equals(request.clearEffectiveTo())) {
+            config.setEffectiveTo(null);
+        } else if (request.effectiveTo() != null) {
+            config.setEffectiveTo(request.effectiveTo());
         }
     }
 
-    private void validateOperationalFeasibility(OperationConfig config) {
-        if (config == null || config.getLine() == null || config.getLine().getId() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cấu hình vận hành phải thuộc về một tuyến hợp lệ");
+    private static void ensureNotSelfReview(OperationConfig config, UUID reviewer) {
+        if (reviewer != null && Objects.equals(reviewer, config.getCreatedBy())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Người soạn cấu hình không được tự duyệt/từ chối (cần người duyệt khác)");
         }
+    }
 
-        Long lineId = config.getLine().getId();
-        List<LineStation> orderedStations = lineStations.findByLineIdOrderByStationOrderAsc(lineId);
-        if (orderedStations == null || orderedStations.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Tuyến chưa có ga nào nên không thể tạo cấu hình vận hành");
+    private static void validateConfigValues(OperationConfig config) {
+        if (config.getNumberOfTrains() == null || config.getNumberOfTrains() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "number_of_trains phải lớn hơn 0");
         }
-        if (orderedStations.size() < 2) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Tuyến cần có ít nhất hai ga để tạo cấu hình vận hành");
-        }
-
-        long readyTrainCount = trains.findByLineId(lineId).stream()
-                .filter(train -> train.getStatus() == TrainStatus.READY || train.getStatus() == TrainStatus.IN_OPERATION)
-                .count();
-        if (config.getNumberOfTrains() > readyTrainCount) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Số lượng tàu yêu cầu " + config.getNumberOfTrains() + " vượt quá số tàu đang sẵn sàng trên tuyến (" + readyTrainCount + ")");
-        }
-
         if (config.getHeadwayMinutes() == null || config.getHeadwayMinutes() <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "headway_minutes phải lớn hơn 0");
         }
@@ -297,34 +296,72 @@ public class OperationConfigService {
         if (config.getTurnaroundTimeMinutes() == null || config.getTurnaroundTimeMinutes() < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "turnaround_time_minutes không được âm");
         }
+        LocalTime start = config.getStartTime();
+        LocalTime end = config.getEndTime();
+        if (start == null || end == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "start_time và end_time không được để trống");
+        }
+        if (start.equals(end)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "start_time và end_time không được trùng nhau");
+        }
+        if (config.getEffectiveFrom() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "effective_from không được để trống");
+        }
+        if (config.getEffectiveTo() != null && config.getEffectiveTo().isBefore(config.getEffectiveFrom())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "effective_to phải lớn hơn hoặc bằng effective_from");
+        }
+    }
 
-        long routeTravelSeconds = orderedStations.stream()
-                .mapToLong(station -> Optional.ofNullable(station.getTravelTimeFromPrevSeconds()).orElse(0))
-                .sum();
-        long dwellSeconds = orderedStations.subList(1, orderedStations.size() - 1).stream()
-                .mapToLong(station -> Optional.ofNullable(station.getDwellTimeSeconds()).orElse(30))
-                .sum();
-        long requiredRouteSeconds = routeTravelSeconds + dwellSeconds;
-        long runningSeconds = (long) config.getRunningTimeMinutes() * 60L;
-        if (runningSeconds < requiredRouteSeconds) {
+    /**
+     * Kiểm tra cấu hình chạy được trên dữ liệu tuyến hiện tại, khớp đúng mô hình của {@code TrainPositionService}.
+     */
+    private void validateOperationalFeasibility(OperationConfig config) {
+        if (config == null || config.getLine() == null || config.getLine().getId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cấu hình vận hành phải thuộc về một tuyến hợp lệ");
+        }
+        Long lineId = config.getLine().getId();
+        List<LineStation> orderedStations = lineStations.findByLineIdOrderByStationOrderAsc(lineId);
+        if (orderedStations == null || orderedStations.size() < 2) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "running_time_minutes không đủ cho thời gian chạy và dừng giữa các ga");
+                    "Tuyến cần có ít nhất hai ga để tạo cấu hình vận hành");
+        }
+
+        long readyTrainCount = trains.findByLineId(lineId).stream()
+                .filter(train -> train.getStatus() != null && train.getStatus().isAvailableForService())
+                .count();
+        if (config.getNumberOfTrains() > readyTrainCount) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Số lượng tàu yêu cầu " + config.getNumberOfTrains()
+                            + " vượt quá số tàu đang sẵn sàng trên tuyến (" + readyTrainCount + ")");
+        }
+
+        long routeTravelSeconds = 0;
+        for (int i = 1; i < orderedStations.size(); i++) {
+            Integer travel = orderedStations.get(i).getTravelTimeFromPrevSeconds();
+            if (travel == null || travel <= 0) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Đoạn tới ga thứ " + (i + 1) + " chưa có travel_time_from_prev_seconds hợp lệ (> 0)");
+            }
+            routeTravelSeconds += travel;
+        }
+        long dwellSeconds = 0;
+        for (int i = 1; i < orderedStations.size() - 1; i++) {
+            Integer dwell = orderedStations.get(i).getDwellTimeSeconds();
+            dwellSeconds += dwell == null ? 0 : dwell;
+        }
+        long runningSeconds = config.getRunningTimeMinutes() * 60L;
+        if (runningSeconds < routeTravelSeconds + dwellSeconds) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "running_time_minutes (" + config.getRunningTimeMinutes() + " phút) không đủ cho thời gian chạy và dừng giữa các ga ("
+                            + Math.ceilDiv(routeTravelSeconds + dwellSeconds, 60) + " phút)");
         }
 
         long cycleSeconds = 2L * (config.getRunningTimeMinutes() + config.getTurnaroundTimeMinutes()) * 60L;
         long trainHeadwaySeconds = (long) config.getNumberOfTrains() * config.getHeadwayMinutes() * 60L;
         if (trainHeadwaySeconds != cycleSeconds) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "number_of_trains × headway_minutes phải khớp với thời gian chạy khứ hồi và quay đầu");
-        }
-    }
-
-    private void ensureOnlyOneActiveConfigForLine(Long lineId, Long configId) {
-        List<OperationConfig> activeConfigs = configs.findByLineIdAndStatus(lineId, OperationConfigStatus.ACTIVE);
-        boolean hasAnotherActiveConfig = activeConfigs.stream().anyMatch(config -> !config.getId().equals(configId));
-        if (hasAnotherActiveConfig) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Tuyến đã có một cấu hình ACTIVE khác. Chỉ được phép có 1 cấu hình ACTIVE trên cùng tuyến.");
+                    "number_of_trains × headway_minutes (" + trainHeadwaySeconds / 60 + ") phải bằng 2 × (running_time + turnaround) ("
+                            + cycleSeconds / 60 + " phút)");
         }
     }
 }

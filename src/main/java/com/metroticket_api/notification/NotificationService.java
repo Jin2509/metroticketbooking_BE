@@ -37,9 +37,12 @@ public class NotificationService {
     private final ApplicationEventPublisher events;
     private final MailTemplates mailTemplates;
     private final Clock clock;
+    private final NotificationDispatcher dispatcher;
 
     public NotificationService(NotificationRepository repository, UserRepository users,
-            ApplicationEventPublisher events, MailTemplates mailTemplates, Clock clock) {
+            ApplicationEventPublisher events, MailTemplates mailTemplates, Clock clock,
+            NotificationDispatcher dispatcher) {
+        this.dispatcher = dispatcher;
         this.repository = repository;
         this.users = users;
         this.events = events;
@@ -49,7 +52,8 @@ public class NotificationService {
 
     @Transactional
     public Notification notify(UUID userId, NotificationType type, String title, String body) {
-        return repository.save(new Notification(userId, type, title, body, clock.instant()));
+        // qua bộ phát chung: có push + realtime, áp tuỳ chọn người nhận
+        return dispatcher.dispatch(NotificationDispatcher.Request.of(userId, type, title, body)).orElse(null);
     }
 
     /** Như notify, và gửi thêm email sau khi transaction commit. */
