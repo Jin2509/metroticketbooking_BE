@@ -54,9 +54,9 @@ class MetroApiHttpTest {
         // token hết hạn/không hợp lệ gửi kèm không làm hỏng API công khai
         mvc.perform(get("/api/v1/public/ticket-products").header("Authorization", "Bearer invalid.token"))
                 .andExpect(status().isOk());
-        // vé lượt và bảng giá theo km đã bỏ
+        // báo giá vé lượt theo quãng đường (bậc đầu tiên)
         mvc.perform(get("/api/v1/public/fares/quote").param("fromStationId", "1").param("toStationId", "2"))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk()).andExpect(jsonPath("$.priceVnd").value(7000));
     }
 
     @Test

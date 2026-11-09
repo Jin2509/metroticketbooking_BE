@@ -6,9 +6,9 @@ public enum SepayResult {
     MATCHED,
     /** Không tìm thấy mã đơn trong nội dung chuyển khoản. */
     UNMATCHED,
-    /** Chuyển thiếu tiền, đơn vẫn chờ. Cần liên hệ khách. */
+    /** Chuyển sai số tiền (thiếu hoặc thừa), không tạo vé, đơn vẫn chờ tới hạn. */
     AMOUNT_MISMATCH,
-    /** Tiền đã vào nhưng không giao được hàng (đơn đã huỷ, trả 2 lần, vé hết hạn...). Kế toán hoàn tiền. */
+    /** Tiền đã vào nhưng đơn không còn nhận thanh toán (hết hạn, đã huỷ, trả 2 lần). Kế toán xử lý khi đối soát. */
     NEEDS_REFUND,
     /** Giao dịch tiền ra hoặc khác tài khoản thụ hưởng. */
     IGNORED

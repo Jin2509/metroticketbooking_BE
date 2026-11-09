@@ -18,14 +18,29 @@ public class TicketDtos {
     /**
      * periods: số kỳ mua (mặc định 1). Vé tháng được mua tối đa {@code maxPeriods} tháng một lần.
      * studentDiscount: null = tự áp ưu đãi sinh viên nếu đủ điều kiện; false = mua giá thường.
+     * originStationId, destinationStationId: bắt buộc với vé lượt (mã SINGLE), bỏ trống với vé theo thời gian.
+     * pointsToUse: số điểm CPoint muốn trừ vào đơn (1 điểm = 1 đồng), không vượt số dư và mức giảm tối đa.
      */
     public record PurchaseTicketRequest(
             @NotBlank @Size(max = 30) String productCode,
             @Min(1) @Max(12) Integer periods,
             @NotNull PaymentMethod paymentMethod,
-            Boolean studentDiscount) {
+            Boolean studentDiscount,
+            @Min(0) Integer pointsToUse,
+            Long originStationId,
+            Long destinationStationId) {
         public PurchaseTicketRequest(String productCode, Integer periods, PaymentMethod paymentMethod) {
-            this(productCode, periods, paymentMethod, null);
+            this(productCode, periods, paymentMethod, null, null, null, null);
+        }
+
+        public PurchaseTicketRequest(String productCode, Integer periods, PaymentMethod paymentMethod,
+                Boolean studentDiscount) {
+            this(productCode, periods, paymentMethod, studentDiscount, null, null, null);
+        }
+
+        public PurchaseTicketRequest(String productCode, Integer periods, PaymentMethod paymentMethod,
+                Boolean studentDiscount, Integer pointsToUse) {
+            this(productCode, periods, paymentMethod, studentDiscount, pointsToUse, null, null);
         }
     }
 
@@ -43,7 +58,8 @@ public class TicketDtos {
             String productName, DurationUnit durationUnit, int durationValue, int periods, int listUnitPriceVnd,
             String discountCode, int discountPercent, int unitPriceVnd, int priceVnd, TicketStatus status, Instant purchasedAt, Instant validFrom, Instant validUntil,
             Instant activatedAt, StationRef lastEntryStation, Instant lastEntryAt, int tripsCount, boolean refundable,
-            Instant refundedAt, PaymentInstruction payment) {
+            Instant refundedAt, PaymentInstruction payment, int pointsUsed, StationRef originStation,
+            StationRef destinationStation, java.math.BigDecimal distanceKm) {
         static TicketResponse of(Ticket t, boolean includeQr, boolean refundable) {
             return of(t, includeQr, refundable, null);
         }
@@ -55,13 +71,9 @@ public class TicketDtos {
                     t.getPeriods(), t.getListUnitPriceVnd(), t.getDiscountCode(), t.getDiscountPercent(),
                     t.getUnitPriceVnd(), t.getPriceVnd(), t.getStatus(), t.getPurchasedAt(),
                     t.getValidFrom(), t.getValidUntil(), t.getActivatedAt(), StationRef.of(t.getLastEntryStation()),
-                    t.getLastEntryAt(), t.getTripsCount(), refundable, t.getRefundedAt(), payment);
+                    t.getLastEntryAt(), t.getTripsCount(), refundable, t.getRefundedAt(), payment, t.getPointsUsed(),
+                    StationRef.of(t.getOriginStation()), StationRef.of(t.getDestinationStation()), t.getDistanceKm());
         }
-    }
-
-    /** awaitingManualTransfer = true: vé trả bằng chuyển khoản, kế toán sẽ chuyển trả tiền (không tự động). */
-    public record RefundResponse(UUID ticketId, TicketStatus status, int refundedAmountVnd,
-            boolean awaitingManualTransfer, Instant refundedAt) {
     }
 
     public record ValidationResponse(Long id, StationRef station, GateDirection direction, GateResult result,
@@ -72,14 +84,19 @@ public class TicketDtos {
         }
     }
 
+    /** fareAdjustmentMethod: cách thu bù khi vé lượt ra quá ga đã mua; bỏ trống thì lượt quét bị từ chối và báo số tiền. */
     public record GateValidationRequest(
             @NotBlank @Size(max = 64) String qrToken,
             @NotNull Long stationId,
-            @NotNull GateDirection direction) {
+            @NotNull GateDirection direction,
+            PaymentMethod fareAdjustmentMethod) {
+        public GateValidationRequest(String qrToken, Long stationId, GateDirection direction) {
+            this(qrToken, stationId, direction, null);
+        }
     }
 
     public record GateValidationResponse(GateResult result, String reason, GateDirection direction,
             StationRef station, String ticketCode, String productCode, TicketStatus ticketStatus,
-            Instant validUntil, Instant validatedAt) {
+            Instant validUntil, Instant validatedAt, Integer fareDifferenceVnd) {
     }
 }

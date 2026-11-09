@@ -29,7 +29,6 @@ public record PaymentProps(
             @DefaultValue("") String webhookHmacSecret,
             /** Phải khớp "Cấu trúc mã thanh toán" khai báo trên SePay để SePay tách field code. */
             @DefaultValue("MTQ") String codePrefix,
-            @DefaultValue("15m") Duration orderTtl,
             @DefaultValue("https://qr.sepay.vn/img") String qrImageUrl,
             @DefaultValue("5") int maxPendingOrdersPerUser,
             /** Chấp nhận lệch đồng hồ khi kiểm tra chữ ký HMAC. */

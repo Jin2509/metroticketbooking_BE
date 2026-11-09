@@ -81,7 +81,9 @@ import com.metroticket_api.user.UserStatus;
         com.metroticket_api.notification.NotificationDispatcher.class, StudentVerificationService.class,
         StudentPolicyService.class, StudentVerificationProcessor.class, TicketService.class, PaymentService.class,
         PaymentOrderService.class, TicketPaymentFulfiller.class, GateService.class, StaffStationService.class,
-        RolePermissionCache.class, MapService.class, GreenJourneyService.class })
+        RolePermissionCache.class, MapService.class, GreenJourneyService.class,
+        com.metroticket_api.system.SystemParamService.class, com.metroticket_api.audit.AuditLogService.class,
+        com.metroticket_api.loyalty.LoyaltyService.class, com.metroticket_api.ticket.FareService.class })
 class StudentAndGreenJourneyIntegrationTest {
 
     /** 10:00 giờ VN ngày 08/11/2026. */

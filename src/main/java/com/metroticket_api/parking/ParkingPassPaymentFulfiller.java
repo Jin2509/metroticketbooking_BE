@@ -30,14 +30,12 @@ public class ParkingPassPaymentFulfiller implements PaymentFulfiller {
     }
 
     @Override
-    public String fulfil(PaymentOrder order, boolean late, Instant now) {
+    public String fulfil(PaymentOrder order, Instant now) {
         ParkingMonthlyPass pass = passes.findById(UUID.fromString(order.getReferenceId())).orElse(null);
         if (pass == null) {
             return "Không tìm thấy vé tháng của đơn";
         }
-        boolean pending = pass.getStatus() == MonthlyPassStatus.PENDING_PAYMENT;
-        boolean recoverable = late && pass.getStatus() == MonthlyPassStatus.CANCELLED;
-        if (!pending && !recoverable) {
+        if (pass.getStatus() != MonthlyPassStatus.PENDING_PAYMENT) {
             return "Vé tháng không ở trạng thái chờ thanh toán (" + pass.getStatus() + ")";
         }
         Instant until = now.plus(ParkingService.MONTHLY_PASS_DURATION);

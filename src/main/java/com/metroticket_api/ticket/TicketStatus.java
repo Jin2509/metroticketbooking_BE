@@ -10,6 +10,8 @@ public enum TicketStatus {
     PENDING_PAYMENT,
     ACTIVE,
     IN_USE,
+    /** Vé lượt đã đi xong. */
+    USED,
     EXPIRED,
     REFUNDED,
     /** Đơn thanh toán hết hạn hoặc khách huỷ trước khi trả tiền. */

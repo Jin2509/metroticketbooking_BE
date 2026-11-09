@@ -15,5 +15,5 @@ public interface TicketProductRepository extends JpaRepository<TicketProduct, Lo
 
     List<TicketProduct> findAllByOrderByIdAsc();
 
-    Optional<TicketProduct> findByDurationUnitAndDurationValueAndStatus(DurationUnit unit, int value, ProductStatus status);
+    Optional<TicketProduct> findByDurationUnitAndDurationValueAndStatusAndSingleJourneyFalse(DurationUnit unit, int value, ProductStatus status);
 }

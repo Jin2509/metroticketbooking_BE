@@ -68,7 +68,9 @@ import com.metroticket_api.user.UserStatus;
         com.metroticket_api.green.GreenJourneyService.class, MapService.class, TicketService.class, TicketProductService.class,
         GateService.class, PaymentService.class, StaffStationService.class, RolePermissionCache.class,
         ParkingService.class, com.metroticket_api.payment.PaymentOrderService.class, TicketPaymentFulfiller.class,
-        com.metroticket_api.parking.ParkingPassPaymentFulfiller.class })
+        com.metroticket_api.parking.ParkingPassPaymentFulfiller.class,
+        com.metroticket_api.system.SystemParamService.class, com.metroticket_api.audit.AuditLogService.class,
+        com.metroticket_api.loyalty.LoyaltyService.class, com.metroticket_api.ticket.FareService.class })
 class TicketParkingIntegrationTest {
 
     /** 10:00 giờ Việt Nam: bãi xe (05:00–23:00) đang mở. */
@@ -156,9 +158,9 @@ class TicketParkingIntegrationTest {
     }
 
     @Test
-    void seededProductsAreTheFourTimeBasedPasses() {
+    void seededProductsAreSingleAndTimeBasedPasses() {
         assertThat(productService.listActive()).extracting(TicketProductDtos.PublicProductResponse::code)
-                .containsExactlyInAnyOrder("DAY_1", "DAY_3", "WEEK_1", "MONTH_1");
+                .containsExactlyInAnyOrder("SINGLE", "DAY_1", "DAY_3", "WEEK_1", "MONTH_1");
         assertThat(productService.listActive()).filteredOn(p -> p.code().equals("MONTH_1"))
                 .singleElement().satisfies(p -> assertThat(p.maxPeriods()).isEqualTo(12));
     }
@@ -179,13 +181,16 @@ class TicketParkingIntegrationTest {
                 DurationUnit.WEEK, 2, 280000, 1, 30, ProductStatus.ACTIVE));
         assertThat(created.code()).isEqualTo("WEEK_2");
 
-        // sửa với version cũ → 409, đúng version → được, đổi giá ghi lịch sử
+        // sửa với version cũ → 409; đổi giá phải qua bảng giá chờ duyệt; sửa tên ghi lịch sử
         assertThatThrownBy(() -> productService.update(created.id(), new TicketProductDtos.UpdateProductRequest(
-                created.version() + 1, null, null, null, null, 250000, null, null)))
+                created.version() + 1, "Vé 2 tuần mới", null, null, null, null, null, null)))
                 .hasMessageContaining("tải lại");
+        assertThatThrownBy(() -> productService.update(created.id(), new TicketProductDtos.UpdateProductRequest(
+                created.version(), null, null, null, null, created.priceVnd() + 1000, null, null)))
+                .hasMessageContaining("bảng giá");
         var updated = productService.update(created.id(), new TicketProductDtos.UpdateProductRequest(
-                created.version(), null, null, null, null, 250000, null, null));
-        assertThat(updated.priceVnd()).isEqualTo(250000);
+                created.version(), "Vé 2 tuần mới", null, null, null, null, null, null));
+        assertThat(updated.name()).isEqualTo("Vé 2 tuần mới");
         assertThat(productService.history(created.id())).extracting(TicketProductDtos.AuditResponse::action)
                 .containsExactly(TicketProductAudit.Action.UPDATED, TicketProductAudit.Action.CREATED);
 
@@ -297,14 +302,10 @@ class TicketParkingIntegrationTest {
     }
 
     @Test
-    void refundUnusedPassAndExpiryJob() {
+    void purchasedPassIsNotRefundableAndExpiryJobRuns() {
         loginAs(passenger, "TICKET_BUY");
         TicketResponse pass = tickets.purchase(new PurchaseTicketRequest("DAY_1", 1, PaymentMethod.CARD));
-        assertThat(pass.refundable()).isTrue();
-        var refund = tickets.refund(pass.id());
-        assertThat(refund.refundedAmountVnd()).isEqualTo(40000);
-        assertThat(refund.status()).isEqualTo(TicketStatus.REFUNDED);
-        assertThatThrownBy(() -> tickets.refund(pass.id())).isInstanceOf(ResponseStatusException.class);
+        assertThat(pass.refundable()).isFalse();
 
         TicketResponse week = tickets.purchase(new PurchaseTicketRequest("WEEK_1", 1, PaymentMethod.CARD));
         assertThat(ticketRepository.expireUnused(week.validUntil().plusSeconds(1))).as("quá hạn kích hoạt")

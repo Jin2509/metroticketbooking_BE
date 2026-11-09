@@ -45,6 +45,10 @@ public class TicketValidation {
     @Column(length = 255)
     private String reason;
 
+    /** Số tiền phải thu bù khi vé lượt ra quá ga đã mua. */
+    @Column(name = "fare_difference_vnd")
+    private Integer fareDifferenceVnd;
+
     @Column(name = "validated_by")
     private UUID validatedBy;
 
@@ -55,7 +59,8 @@ public class TicketValidation {
     }
 
     public TicketValidation(Ticket ticket, Station station, GateDirection direction, GateResult result, String reason,
-            UUID validatedBy, Instant validatedAt) {
+            UUID validatedBy, Instant validatedAt, Integer fareDifferenceVnd) {
+        this.fareDifferenceVnd = fareDifferenceVnd;
         this.ticket = ticket;
         this.station = station;
         this.direction = direction;

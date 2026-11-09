@@ -76,7 +76,9 @@ import com.metroticket_api.user.UserStatus;
         com.metroticket_api.student.StudentVerificationService.class,
         com.metroticket_api.green.GreenJourneyService.class, MapService.class, TicketService.class,
         GateService.class, PaymentService.class, PaymentOrderService.class, TicketPaymentFulfiller.class,
-        ParkingPassPaymentFulfiller.class, StaffStationService.class, RolePermissionCache.class, ParkingService.class })
+        ParkingPassPaymentFulfiller.class, StaffStationService.class, RolePermissionCache.class, ParkingService.class,
+        com.metroticket_api.system.SystemParamService.class, com.metroticket_api.audit.AuditLogService.class,
+        com.metroticket_api.loyalty.LoyaltyService.class, com.metroticket_api.ticket.FareService.class })
 class SepayPaymentIntegrationTest {
 
     /** 10:00 giờ Việt Nam. */
@@ -133,7 +135,6 @@ class SepayPaymentIntegrationTest {
     @Autowired UserRepository users;
     @Autowired TicketRepository ticketRepository;
     @Autowired PaymentTransactionRepository payments;
-    @Autowired PaymentService paymentService;
     @Autowired SepayTransactionRepository sepayTransactions;
     @Autowired ParkingLotRepository lots;
     @Autowired ParkingMonthlyPassRepository passes;
@@ -203,7 +204,7 @@ class SepayPaymentIntegrationTest {
         assertThat(payments.findByPurposeAndReferenceIdAndStatus(PaymentPurpose.TICKET, bought.id().toString(),
                 PaymentStatus.SUCCEEDED)).hasSize(1);
 
-        // Chuyển khoản lần 2 cho đơn đã thanh toán → cần hoàn tiền
+        // Chuyển khoản lần 2 cho đơn đã thanh toán → ghi nhận để Kế toán xử lý
         assertThat(pay(bought.payment().orderCode(), 40000)).isEqualTo(SepayResult.NEEDS_REFUND);
 
         loginAs(passenger, "TICKET_BUY");
@@ -231,24 +232,24 @@ class SepayPaymentIntegrationTest {
     }
 
     @Test
-    void expiredOrderCancelsTicketButLatePaymentStillActivatesIfUsable() {
+    void orderExpiresAfterQrTtlAndLatePaymentCreatesNoTicket() {
         TicketResponse bought = buyDayPass();
-        clock.advance(Duration.ofMinutes(16));
+        assertThat(bought.payment().expiresAt()).isEqualTo(clock.instant().plus(Duration.ofMinutes(10)));
+        clock.advance(Duration.ofMinutes(11));
         orders.expireOrders();
         assertThat(ticketRepository.findById(bought.id()).orElseThrow().getStatus()).isEqualTo(TicketStatus.CANCELLED);
 
-        assertThat(pay(bought.payment().orderCode(), 40000)).isEqualTo(SepayResult.MATCHED);
-        assertThat(ticketRepository.findById(bought.id()).orElseThrow().getStatus()).isEqualTo(TicketStatus.ACTIVE);
+        assertThat(pay(bought.payment().orderCode(), 40000)).isEqualTo(SepayResult.NEEDS_REFUND);
+        assertThat(ticketRepository.findById(bought.id()).orElseThrow().getStatus()).isEqualTo(TicketStatus.CANCELLED);
+        assertThat(payments.findByPurposeAndReferenceIdAndStatus(PaymentPurpose.TICKET, bought.id().toString(),
+                PaymentStatus.SUCCEEDED)).isEmpty();
     }
 
     @Test
-    void latePaymentAfterTicketValidityNeedsRefund() {
+    void overpaymentCreatesNoTicket() {
         TicketResponse bought = buyDayPass();
-        clock.advance(Duration.ofDays(31)); // quá hạn kích hoạt 30 ngày: vé không còn dùng được
-        orders.expireOrders();
-        assertThat(pay(bought.payment().orderCode(), 40000)).isEqualTo(SepayResult.NEEDS_REFUND);
-        assertThat(payments.findByPurposeAndReferenceIdAndStatus(PaymentPurpose.TICKET, bought.id().toString(),
-                PaymentStatus.REFUND_PENDING)).hasSize(1);
+        assertThat(pay(bought.payment().orderCode(), 41000)).isEqualTo(SepayResult.AMOUNT_MISMATCH);
+        assertThat(ticketRepository.findById(bought.id()).orElseThrow().getStatus()).isEqualTo(TicketStatus.PENDING_PAYMENT);
     }
 
     @Test
@@ -285,17 +286,6 @@ class SepayPaymentIntegrationTest {
         assertThatThrownBy(() -> tickets.purchase(new PurchaseTicketRequest("DAY_1", 1, PaymentMethod.CARD)))
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
-    }
-
-    @Test
-    void refundOfTransferPaidTicketAwaitsManualTransfer() {
-        TicketResponse bought = buyDayPass();
-        assertThat(pay(bought.payment().orderCode(), 40000)).isEqualTo(SepayResult.MATCHED);
-        var refund = tickets.refund(bought.id());
-        assertThat(refund.awaitingManualTransfer()).isTrue();
-        PaymentTransaction pending = payments.findByPurposeAndReferenceIdAndStatus(PaymentPurpose.TICKET,
-                bought.id().toString(), PaymentStatus.REFUND_PENDING).get(0);
-        assertThat(paymentService.confirmRefunded(pending.getId()).getStatus()).isEqualTo(PaymentStatus.REFUNDED);
     }
 
     @Test

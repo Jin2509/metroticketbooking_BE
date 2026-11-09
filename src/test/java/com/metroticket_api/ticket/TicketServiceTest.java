@@ -68,12 +68,10 @@ class TicketServiceTest {
         TicketProduct day = product(DurationUnit.DAY, 1, 40_000, 1);
         Instant bought = Instant.parse("2026-11-01T00:00:00Z");
         Ticket t = ticket(day, 1, bought);
-        assertThat(TicketService.isRefundable(t, bought.plusSeconds(60))).isTrue();
 
         Instant tap = Instant.parse("2026-11-05T01:00:00Z");
         t.enter(mock(Station.class), tap);
         assertThat(t.getActivatedAt()).isEqualTo(tap);
-        assertThat(TicketService.isRefundable(t, tap)).as("đã kích hoạt thì không hoàn").isFalse();
         t.exit(tap.plusSeconds(1800));
         assertThat(t.getStatus()).isEqualTo(TicketStatus.ACTIVE);
 

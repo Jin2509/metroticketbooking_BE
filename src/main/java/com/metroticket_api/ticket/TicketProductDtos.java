@@ -43,10 +43,10 @@ public class TicketProductDtos {
 
     /** Thông tin công khai cho app (không lộ người tạo/sửa). */
     public record PublicProductResponse(String code, String name, String description, DurationUnit durationUnit,
-            int durationValue, int priceVnd, int maxPeriods, int activationWindowDays) {
+            int durationValue, int priceVnd, int maxPeriods, int activationWindowDays, boolean singleJourney) {
         static PublicProductResponse of(TicketProduct p) {
             return new PublicProductResponse(p.getCode(), p.getName(), p.getDescription(), p.getDurationUnit(),
-                    p.getDurationValue(), p.getPriceVnd(), p.getMaxPeriods(), p.getActivationWindowDays());
+                    p.getDurationValue(), p.getPriceVnd(), p.getMaxPeriods(), p.getActivationWindowDays(), p.isSingleJourney());
         }
     }
 

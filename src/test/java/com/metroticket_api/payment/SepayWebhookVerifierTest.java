@@ -20,7 +20,7 @@ class SepayWebhookVerifierTest {
 
     static PaymentProps props(String apiKey, String hmac) {
         return new PaymentProps(false, new PaymentProps.Sepay(true, "MBBank", "0123456789", "METRO", apiKey, hmac,
-                "MTQ", Duration.ofMinutes(15), "https://qr.sepay.vn/img", 5, Duration.ofMinutes(5)));
+                "MTQ", "https://qr.sepay.vn/img", 5, Duration.ofMinutes(5)));
     }
 
     private static SepayWebhookVerifier verifier(String apiKey, String hmac) {
@@ -63,7 +63,7 @@ class SepayWebhookVerifierTest {
     void extractsOrderCodeEvenWhenBankMangledContent() {
         PaymentOrderService service = new PaymentOrderService(mock(PaymentOrderRepository.class),
                 mock(SepayTransactionRepository.class), mock(PaymentService.class), props("k", ""), List.of(),
-                Clock.systemUTC(), null);
+                Clock.systemUTC(), null, null);
         assertThat(service.extractCode(payload(null, "CK MTQ7KQ2X9HD thanh toan ve"))).contains("MTQ7KQ2X9HD");
         assertThat(service.extractCode(payload("MTQ7KQ2X9HD", "abc"))).contains("MTQ7KQ2X9HD");
         assertThat(service.extractCode(payload(null, "mtq-7kq2-x9hd"))).contains("MTQ7KQ2X9HD");

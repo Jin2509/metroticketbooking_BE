@@ -68,6 +68,22 @@ public class Ticket {
     @Column(name = "price_vnd", nullable = false)
     private int priceVnd;
 
+    /** Số điểm CPoint đã trừ vào đơn; priceVnd là số tiền còn phải trả sau khi trừ điểm. */
+    @Column(name = "points_used", nullable = false)
+    private int pointsUsed;
+
+    /** Chỉ vé lượt có ga đi, ga đến và quãng đường đã mua. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "origin_station_id")
+    private Station originStation;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "destination_station_id")
+    private Station destinationStation;
+
+    @Column(name = "distance_km", precision = 8, scale = 3)
+    private java.math.BigDecimal distanceKm;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private TicketStatus status;
@@ -157,7 +173,9 @@ public class Ticket {
     public void enter(Station station, Instant now) {
         if (activatedAt == null) {
             activatedAt = now;
-            validUntil = durationUnit.expiry(now, durationValue * periods);
+            if (!isSingleJourney()) {
+                validUntil = durationUnit.expiry(now, durationValue * periods);
+            }
         }
         status = TicketStatus.IN_USE;
         lastEntryStation = station;
@@ -167,6 +185,10 @@ public class Ticket {
     /** Quẹt ra: vé quay lại ACTIVE cho chuyến sau, hoặc EXPIRED nếu đã quá hạn trong lúc đi. */
     public void exit(Instant now) {
         tripsCount++;
+        if (isSingleJourney()) {
+            status = TicketStatus.USED;
+            return;
+        }
         status = now.isBefore(validUntil) ? TicketStatus.ACTIVE : TicketStatus.EXPIRED;
     }
 
@@ -179,18 +201,33 @@ public class Ticket {
         return (int) Math.max(rounded, percent >= 100 ? 0 : 1000);
     }
 
+    /** Gắn hành trình và giá theo quãng đường, gọi trước khi trừ điểm. */
+    void assignJourney(Station origin, Station destination, java.math.BigDecimal km, int fareVnd) {
+        this.originStation = origin;
+        this.destinationStation = destination;
+        this.distanceKm = km;
+        this.listUnitPriceVnd = fareVnd;
+        this.unitPriceVnd = fareVnd;
+        this.priceVnd = fareVnd;
+    }
+
+    public boolean isSingleJourney() {
+        return originStation != null;
+    }
+
+    /** Trừ giá trị điểm vào đơn (1 điểm = 1 đồng). */
+    public void applyPoints(int points) {
+        this.pointsUsed = points;
+        this.priceVnd -= points;
+    }
+
     public void awaitPayment() {
         status = TicketStatus.PENDING_PAYMENT;
     }
 
-    /** Tiền về: vé chờ thanh toán (hoặc vé vừa bị huỷ do hết giữ chỗ nhưng vẫn còn hạn dùng) được kích hoạt. */
-    public boolean confirmPayment(boolean allowReactivate, Instant now) {
-        boolean pending = status == TicketStatus.PENDING_PAYMENT;
-        boolean recoverable = allowReactivate && status == TicketStatus.CANCELLED && now.isBefore(validUntil);
-        if (!pending && !recoverable) {
-            return false;
-        }
-        if (!now.isBefore(validUntil)) {
+    /** Tiền về đúng hạn: vé đang chờ thanh toán được kích hoạt. */
+    public boolean confirmPayment(Instant now) {
+        if (status != TicketStatus.PENDING_PAYMENT || !now.isBefore(validUntil)) {
             return false;
         }
         status = TicketStatus.ACTIVE;
@@ -229,7 +266,11 @@ public class Ticket {
     public String getDiscountCode() { return discountCode; }
     public int getDiscountPercent() { return discountPercent; }
     public int getPriceVnd() { return priceVnd; }
+    public int getPointsUsed() { return pointsUsed; }
     public TicketStatus getStatus() { return status; }
+    public Station getOriginStation() { return originStation; }
+    public Station getDestinationStation() { return destinationStation; }
+    public java.math.BigDecimal getDistanceKm() { return distanceKm; }
     public Instant getPurchasedAt() { return purchasedAt; }
     public Instant getValidFrom() { return validFrom; }
     public Instant getValidUntil() { return validUntil; }

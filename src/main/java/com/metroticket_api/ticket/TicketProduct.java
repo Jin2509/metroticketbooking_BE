@@ -59,6 +59,10 @@ public class TicketProduct {
     @Column(nullable = false, length = 20)
     private ProductStatus status = ProductStatus.ACTIVE;
 
+    /** Vé lượt: giá tính theo bảng fare_band tại lúc mua, không dùng priceVnd. */
+    @Column(name = "single_journey", nullable = false)
+    private boolean singleJourney;
+
     @Column(name = "created_by", updatable = false)
     private UUID createdBy;
 
@@ -112,6 +116,7 @@ public class TicketProduct {
     public DurationUnit getDurationUnit() { return durationUnit; }
     public int getDurationValue() { return durationValue; }
     public int getPriceVnd() { return priceVnd; }
+    public boolean isSingleJourney() { return singleJourney; }
     public int getMaxPeriods() { return maxPeriods; }
     public int getActivationWindowDays() { return activationWindowDays; }
     public ProductStatus getStatus() { return status; }

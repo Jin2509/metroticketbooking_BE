@@ -3,6 +3,7 @@ package com.metroticket_api.payment;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumMap;
 import java.util.List;
@@ -23,13 +24,15 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.metroticket_api.security.CurrentUser;
+import com.metroticket_api.system.SystemParamKey;
+import com.metroticket_api.system.SystemParamService;
 import com.metroticket_api.ticket.SecureCodes;
 
 /**
  * Thanh toán chuyển khoản bằng mã VietQR, SePay báo kết quả qua webhook.
  *
  * <pre>
- * Mua vé (SEPAY_QR) → vé PENDING_PAYMENT + đơn PENDING (mã MTQxxxxxxxx, hết hạn sau order-ttl)
+ * Mua vé (SEPAY_QR) → vé PENDING_PAYMENT + đơn PENDING (mã MTQxxxxxxxx, hết hạn theo tham số PAYMENT_QR_TTL_MINUTES)
  *   → app hiển thị ảnh QR (số tiền + nội dung = mã đơn) → khách chuyển khoản
  *   → SePay POST webhook → xác thực → khớp mã đơn + số tiền → đơn PAID, vé ACTIVE
  * Hết hạn chưa trả → đơn EXPIRED, vé CANCELLED (job mỗi phút).
@@ -39,9 +42,8 @@ import com.metroticket_api.ticket.SecureCodes;
  * <ul>
  *   <li>Chỉ xử lý mỗi giao dịch SePay đúng một lần (khoá chính = id SePay); SePay gửi lại thì trả thành công luôn.</li>
  *   <li>Bỏ qua tiền ra và giao dịch không phải tài khoản thụ hưởng đã cấu hình.</li>
- *   <li>Chuyển thiếu: đơn vẫn chờ, ghi AMOUNT_MISMATCH để đối soát. Chuyển thừa: vẫn giao, ghi chú phần thừa.</li>
- *   <li>Tiền về sau khi đơn hết hạn: kích hoạt lại nếu hàng còn dùng được, không thì NEEDS_REFUND.
- *       Đơn khách tự huỷ hoặc trả 2 lần: NEEDS_REFUND.</li>
+ *   <li>Phải chuyển đúng số tiền: thiếu hoặc thừa đều không tạo vé, đơn vẫn chờ, ghi AMOUNT_MISMATCH để đối soát.</li>
+ *   <li>Tiền về sau khi đơn hết hạn, đơn đã huỷ hoặc trả 2 lần: không tạo vé, ghi NEEDS_REFUND để Kế toán xử lý.</li>
  * </ul>
  */
 @Service
@@ -63,11 +65,13 @@ public class PaymentOrderService {
     private final Pattern codePattern;
     private final Clock clock;
     private final com.metroticket_api.notification.NotificationDispatcher notifier;
+    private final SystemParamService params;
 
     public PaymentOrderService(PaymentOrderRepository orders, SepayTransactionRepository sepayTransactions,
             PaymentService payments, PaymentProps props, List<PaymentFulfiller> fulfillerBeans, Clock clock,
-            com.metroticket_api.notification.NotificationDispatcher notifier) {
+            com.metroticket_api.notification.NotificationDispatcher notifier, SystemParamService params) {
         this.notifier = notifier;
+        this.params = params;
         this.orders = orders;
         this.sepayTransactions = sepayTransactions;
         this.payments = payments;
@@ -98,7 +102,7 @@ public class PaymentOrderService {
             code = SecureCodes.humanCode(sepay.codePrefix().toUpperCase(Locale.ROOT), CODE_SUFFIX_LENGTH);
         } while (orders.existsByOrderCode(code));
         return orders.save(new PaymentOrder(code, userId, purpose, referenceId, amountVnd,
-                clock.instant().plus(sepay.orderTtl())));
+                clock.instant().plus(Duration.ofMinutes(params.intValue(SystemParamKey.PAYMENT_QR_TTL_MINUTES)))));
     }
 
     public PaymentInstruction instructionOf(PaymentOrder order) {
@@ -163,36 +167,39 @@ public class PaymentOrderService {
         PaymentOrder order = found.get();
         long amount = payload.transferAmount();
 
-        if (order.getStatus() == PaymentOrderStatus.PAID || order.getStatus() == PaymentOrderStatus.CANCELLED) {
-            tx.resolve(SepayResult.NEEDS_REFUND, order.getId(), order.getStatus() == PaymentOrderStatus.PAID
-                    ? "Đơn đã được thanh toán trước đó (chuyển trùng)" : "Đơn đã bị khách huỷ");
+        if (order.getStatus() != PaymentOrderStatus.PENDING) {
+            tx.resolve(SepayResult.NEEDS_REFUND, order.getId(), switch (order.getStatus()) {
+                case PAID -> "Đơn đã được thanh toán trước đó (chuyển trùng)";
+                case EXPIRED -> "Tiền về sau khi đơn đã hết hạn";
+                default -> "Đơn đã bị khách huỷ";
+            });
             return tx.getResult();
         }
-        if (amount < order.getAmountVnd()) {
+        if (amount != order.getAmountVnd()) {
             tx.resolve(SepayResult.AMOUNT_MISMATCH, order.getId(),
                     "Chuyển " + amount + " đ, cần " + order.getAmountVnd() + " đ");
             return tx.getResult();
         }
 
-        boolean late = order.getStatus() == PaymentOrderStatus.EXPIRED;
         int paid = Math.toIntExact(amount);
         order.markPaid(paid, payload.id(), now);
         payments.recordSepay(order.getUserId(), order.getPurpose(), order.getReferenceId(), paid, payload.id(),
                 payload.referenceCode());
-        String failure = fulfiller(order).fulfil(order, late, now);
+        String failure = fulfiller(order).fulfil(order, now);
         if (failure != null) {
             payments.refundAll(order.getPurpose(), order.getReferenceId());
             tx.resolve(SepayResult.NEEDS_REFUND, order.getId(), failure);
             notifyPayment(order, "Đã nhận " + paid + " đ nhưng không kích hoạt được",
-                    "Đơn " + order.getOrderCode() + ": " + failure + ". Chúng tôi sẽ hoàn tiền cho bạn.", "PAYMENT_REFUND:");
+                    "Đơn " + order.getOrderCode() + ": " + failure + ". Vui lòng liên hệ bộ phận hỗ trợ.", "PAYMENT_REFUND:", false);
             return tx.getResult();
         }
-        notifyPayment(order, "Thanh toán thành công", "Đã nhận " + paid + " đ cho đơn " + order.getOrderCode()
-                + (order.getPurpose() == PaymentPurpose.TICKET ? ". Vé của bạn đã sẵn sàng." : ". Vé tháng gửi xe đã được kích hoạt."),
-                "PAYMENT_PAID:");
-        String note = (late ? "Thanh toán sau khi đơn hết hạn. " : "")
-                + (amount > order.getAmountVnd() ? "Chuyển thừa " + (amount - order.getAmountVnd()) + " đ" : "");
-        tx.resolve(SepayResult.MATCHED, order.getId(), note.isBlank() ? null : note.trim());
+        notifyPayment(order, "Thanh toán thành công", "Đã nhận " + paid + " đ cho đơn " + order.getOrderCode() + ". "
+                + switch (order.getPurpose()) {
+                    case TICKET -> "Vé của bạn đã sẵn sàng.";
+                    case PARKING_BOOKING -> "Lượt gửi xe đã được xác nhận.";
+                    default -> "Vé tháng gửi xe đã được kích hoạt.";
+                }, "PAYMENT_PAID:", true);
+        tx.resolve(SepayResult.MATCHED, order.getId(), null);
         return tx.getResult();
     }
 
@@ -224,20 +231,23 @@ public class PaymentOrderService {
             order.expire();
             fulfiller(order).release(order);
             notifyPayment(order, "Đơn thanh toán đã hết hạn", "Đơn " + order.getOrderCode()
-                    + " chưa nhận được tiền nên đã huỷ. Nếu bạn đã chuyển khoản, hệ thống vẫn tự kích hoạt khi tiền về.",
-                    "PAYMENT_EXPIRED:");
+                    + " chưa nhận được tiền nên đã huỷ. Bạn có thể đặt lại.", "PAYMENT_EXPIRED:", false);
         }
         if (!expired.isEmpty()) {
             log.info("Đã huỷ giữ chỗ {} đơn thanh toán quá hạn", expired.size());
         }
     }
 
-    private void notifyPayment(PaymentOrder order, String title, String body, String keyPrefix) {
-        String link = order.getPurpose() == PaymentPurpose.TICKET ? "/tickets/" + order.getReferenceId()
-                : "/parking/passes/" + order.getReferenceId();
-        notifier.dispatch(com.metroticket_api.notification.NotificationDispatcher.Request
+    private void notifyPayment(PaymentOrder order, String title, String body, String keyPrefix, boolean email) {
+        String link = switch (order.getPurpose()) {
+            case TICKET -> "/tickets/" + order.getReferenceId();
+            case PARKING_BOOKING -> "/parking/bookings/" + order.getReferenceId();
+            default -> "/parking/passes/" + order.getReferenceId();
+        };
+        var request = com.metroticket_api.notification.NotificationDispatcher.Request
                 .of(order.getUserId(), com.metroticket_api.notification.NotificationType.PAYMENT, title, body)
-                .link(link).dedupe(keyPrefix + order.getId()));
+                .link(link).dedupe(keyPrefix + order.getId());
+        notifier.dispatch(email ? request.withEmail() : request);
     }
 
     private PaymentFulfiller fulfiller(PaymentOrder order) {

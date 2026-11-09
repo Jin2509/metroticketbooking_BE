@@ -31,6 +31,15 @@ public final class PermissionCodes {
     public static final String STUDENT_VERIFY = "STUDENT_VERIFY";
     public static final String STUDENT_POLICY_MANAGE = "STUDENT_POLICY_MANAGE";
     public static final String GREEN_JOURNEY_MANAGE = "GREEN_JOURNEY_MANAGE";
+    public static final String SYSTEM_PARAM_MANAGE = "SYSTEM_PARAM_MANAGE";
+    public static final String FARE_APPROVE = "FARE_APPROVE";
+    public static final String INCIDENT_REPORT = "INCIDENT_REPORT";
+    public static final String INCIDENT_MANAGE = "INCIDENT_MANAGE";
+    public static final String REPORT_EXPORT = "REPORT_EXPORT";
+    public static final String REPORT_TRAFFIC_VIEW = "REPORT_TRAFFIC_VIEW";
+    public static final String CHATBOT_USE = "CHATBOT_USE";
+    public static final String CHATBOT_MANAGE = "CHATBOT_MANAGE";
+    public static final String AUDIT_VIEW = "AUDIT_VIEW";
 
     private PermissionCodes() {
     }

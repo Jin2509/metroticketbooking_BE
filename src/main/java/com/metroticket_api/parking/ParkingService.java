@@ -74,12 +74,14 @@ public class ParkingService {
     private final PaymentService payments;
     private final PaymentOrderService paymentOrders;
     private final PaymentProps paymentProps;
+    private final ParkingBookingRepository bookings;
     private final Clock clock;
 
     public ParkingService(ParkingLotRepository lots, ParkingRateRepository rates, ParkingSessionRepository sessions,
             ParkingMonthlyPassRepository passes, StationRepository stations, TicketRepository tickets,
             TicketValidationRepository validations, StaffStationService staffStations, PaymentService payments,
-            PaymentOrderService paymentOrders, PaymentProps paymentProps, Clock clock) {
+            PaymentOrderService paymentOrders, PaymentProps paymentProps, ParkingBookingRepository bookings, Clock clock) {
+        this.bookings = bookings;
         this.paymentOrders = paymentOrders;
         this.paymentProps = paymentProps;
         this.lots = lots;
@@ -200,7 +202,7 @@ public class ParkingService {
                         "Bãi không nhận loại xe " + request.vehicleType()));
         long parked = sessions.countByLotIdAndVehicleTypeAndStatus(lot.getId(), request.vehicleType(),
                 ParkingSessionStatus.PARKED);
-        if (parked >= rate.getCapacity()) {
+        if (parked + bookings.countHolding(lot.getId(), request.vehicleType(), now, now) >= rate.getCapacity()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Bãi đã hết chỗ cho " + request.vehicleType());
         }
         if (plate != null && sessions.existsByPlateNumberAndStatus(plate, ParkingSessionStatus.PARKED)) {

@@ -27,7 +27,7 @@ import com.metroticket_api.ticket.TicketProductDtos.UpdateProductRequest;
  *   <li><b>Thêm</b>: mã duy nhất (viết hoa); thời lượng hợp lệ theo đơn vị (DAY 1–6, WEEK 1–3, MONTH 1–12); chỉ vé
  *       tháng được bán nhiều kỳ (tối đa 12); không có 2 loại vé ACTIVE trùng thời lượng.</li>
  *   <li><b>Sửa</b>: mã không đổi; phải gửi đúng {@code version} đang có (chống ghi đè khi 2 người cùng sửa);
- *       đổi giá chỉ áp dụng cho lượt mua sau, vé đã bán và đơn đang chờ thanh toán giữ giá cũ;
+ *       đổi giá phải qua bảng giá chờ duyệt (TicketPriceService), vé đã bán giữ giá cũ;
  *       thời lượng chỉ đổi được khi loại vé chưa bán vé nào.</li>
  *   <li><b>Ngừng bán / mở bán</b>: vé đã bán vẫn dùng bình thường; mở bán lại kiểm tra trùng thời lượng.</li>
  *   <li><b>Xoá</b>: chỉ khi chưa bán vé nào (kể cả vé đã huỷ/hoàn), ngược lại phải ngừng bán.</li>
@@ -117,6 +117,9 @@ public class TicketProductService {
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                         "Loại vé đã bán, không thể đổi thời lượng; hãy ngừng bán và tạo loại vé mới");
             }
+            if (product.isSingleJourney()) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Vé lượt không đổi được thời lượng");
+            }
             String before = product.durationLabel();
             product.setDuration(unit, value);
             changes.add("thời lượng: " + before + " → " + product.durationLabel());
@@ -125,8 +128,7 @@ public class TicketProductService {
             }
         }
         if (request.priceVnd() != null && request.priceVnd() != product.getPriceVnd()) {
-            changes.add("giá: " + product.getPriceVnd() + " → " + request.priceVnd());
-            product.setPriceVnd(request.priceVnd());
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Đổi giá phải lập bảng giá và được Quản lý duyệt");
         }
         if (request.maxPeriods() != null && request.maxPeriods() != product.getMaxPeriods()) {
             changes.add("số kỳ tối đa: " + product.getMaxPeriods() + " → " + request.maxPeriods());
@@ -211,7 +213,10 @@ public class TicketProductService {
     }
 
     private void ensureNoActiveDuplicate(TicketProduct product) {
-        products.findByDurationUnitAndDurationValueAndStatus(product.getDurationUnit(), product.getDurationValue(),
+        if (product.isSingleJourney()) {
+            return;
+        }
+        products.findByDurationUnitAndDurationValueAndStatusAndSingleJourneyFalse(product.getDurationUnit(), product.getDurationValue(),
                 ProductStatus.ACTIVE)
                 .filter(other -> !other.getId().equals(product.getId()))
                 .ifPresent(other -> {

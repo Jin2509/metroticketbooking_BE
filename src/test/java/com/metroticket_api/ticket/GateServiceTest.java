@@ -36,7 +36,7 @@ class GateServiceTest {
 
     @BeforeEach
     void setUp() {
-        gate = new GateService(tickets, validations, stations, mock(StaffStationService.class), null,
+        gate = new GateService(tickets, validations, stations, mock(StaffStationService.class), null, mock(FareService.class), mock(com.metroticket_api.payment.PaymentService.class),
                 Clock.fixed(NOW, ZoneOffset.UTC));
         benThanh = station(1L, "Bến Thành", StationStatus.ACTIVE);
         thuDuc = station(11L, "Thủ Đức", StationStatus.ACTIVE);

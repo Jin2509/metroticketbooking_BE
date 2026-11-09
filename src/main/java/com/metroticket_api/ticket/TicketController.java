@@ -22,7 +22,6 @@ import org.springframework.web.bind.annotation.RestController;
 import com.metroticket_api.ticket.TicketDtos.GateValidationRequest;
 import com.metroticket_api.ticket.TicketDtos.GateValidationResponse;
 import com.metroticket_api.ticket.TicketDtos.PurchaseTicketRequest;
-import com.metroticket_api.ticket.TicketDtos.RefundResponse;
 import com.metroticket_api.ticket.TicketDtos.TicketResponse;
 import com.metroticket_api.ticket.TicketDtos.ValidationResponse;
 
@@ -53,8 +52,9 @@ public class TicketController {
     @PreAuthorize("hasAuthority('TICKET_VIEW_OWN')")
     @GetMapping("/me/tickets")
     public Page<TicketResponse> myTickets(@RequestParam(required = false) TicketStatus status,
+            @RequestParam(required = false) String productCode,
             @PageableDefault(size = 20) Pageable pageable) {
-        return tickets.myTickets(status, pageable);
+        return tickets.myTickets(status, productCode, pageable);
     }
 
     /** Chủ vé hoặc người có TICKET_VIEW_ALL. */
@@ -66,13 +66,6 @@ public class TicketController {
     @GetMapping("/tickets/{ticketId}/validations")
     public List<ValidationResponse> history(@PathVariable UUID ticketId) {
         return tickets.history(ticketId);
-    }
-
-    @Operation(summary = "Hoàn vé", description = "Chỉ vé chưa sử dụng, chưa kích hoạt, còn hạn; chỉ chủ vé.")
-    @PreAuthorize("hasAuthority('TICKET_BUY')")
-    @PostMapping("/tickets/{ticketId}/refund")
-    public RefundResponse refund(@PathVariable UUID ticketId) {
-        return tickets.refund(ticketId);
     }
 
     @PreAuthorize("hasAuthority('TICKET_VIEW_ALL')")

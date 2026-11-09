@@ -61,6 +61,18 @@ public class SepayTransaction {
     @Column(name = "received_at", nullable = false)
     private Instant receivedAt;
 
+    @Column(nullable = false)
+    private boolean reconciled;
+
+    @Column(name = "reconciled_at")
+    private Instant reconciledAt;
+
+    @Column(name = "reconciled_by")
+    private UUID reconciledBy;
+
+    @Column(name = "reconcile_note", columnDefinition = "TEXT")
+    private String reconcileNote;
+
     protected SepayTransaction() {
     }
 
@@ -86,6 +98,16 @@ public class SepayTransaction {
         this.note = truncate(note, 255);
     }
 
+    void markReconciled(UUID by, Instant at) {
+        reconciled = true;
+        reconciledBy = by;
+        reconciledAt = at;
+    }
+
+    void addReconcileNote(String note) {
+        reconcileNote = note;
+    }
+
     private static String truncate(String value, int max) {
         return value == null || value.length() <= max ? value : value.substring(0, max);
     }
@@ -103,4 +125,7 @@ public class SepayTransaction {
     public SepayResult getResult() { return result; }
     public String getNote() { return note; }
     public Instant getReceivedAt() { return receivedAt; }
+    public boolean isReconciled() { return reconciled; }
+    public Instant getReconciledAt() { return reconciledAt; }
+    public String getReconcileNote() { return reconcileNote; }
 }
