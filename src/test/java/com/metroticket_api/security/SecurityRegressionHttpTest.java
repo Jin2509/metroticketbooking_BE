@@ -116,6 +116,65 @@ class SecurityRegressionHttpTest {
                 .andExpect(status().isBadRequest());
     }
 
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    /** Hồi quy: accept/resolve trả về view có tên ga (LAZY) sau khi transaction đóng, trước đây ném 500. */
+    @Test
+    void managerAcceptsAndResolvesIncidentOverHttp() throws Exception {
+        Long id = jdbc.queryForObject("""
+                insert into incident (station_id, incident_type, severity, description, created_at)
+                values ((select min(id) from station), 'EQUIPMENT', 'HIGH', 'Cổng 2 kẹt thẻ', now()) returning id
+                """, Long.class);
+        UUID manager = realUser();
+        mvc.perform(post("/api/v1/incidents/" + id + "/accept").with(as(manager, "MANAGER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("IN_PROGRESS"))
+                .andExpect(jsonPath("$.stationName").isNotEmpty());
+        mvc.perform(post("/api/v1/incidents/" + id + "/resolve").with(as(manager, "MANAGER"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"resolution\":\"Đã thay đầu đọc\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("RESOLVED"))
+                .andExpect(jsonPath("$.stationName").isNotEmpty());
+    }
+
+    @Test
+    void singleFareQrAndGateEndpointsRbac() throws Exception {
+        // báo giá công khai, có đơn giá/km + bước làm tròn + giá tối thiểu
+        mvc.perform(get("/api/v1/public/fares")).andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.productCode=='SINGLE')].farePerKmVnd").value(1000))
+                .andExpect(jsonPath("$[?(@.productCode=='SINGLE')].roundingVnd").value(1000));
+        mvc.perform(get("/api/v1/public/fares/quote").param("fromStationId", "1").param("toStationId", "2")
+                        .param("productCode", "DAY_1"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/public/ticket-products"))
+                .andExpect(jsonPath("$[?(@.code=='SINGLE')].farePerKmVnd").value(1000));
+
+        // đổi đơn giá/km: chỉ ADMIN (FARE_MANAGE)
+        String perKm = "{\"farePerKmVnd\":1200}";
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put("/api/v1/fares/SINGLE/per-km")
+                        .with(as(UUID.randomUUID(), "PASSENGER")).contentType(MediaType.APPLICATION_JSON).content(perKm))
+                .andExpect(status().isForbidden());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put("/api/v1/fares/SINGLE/per-km")
+                        .with(as(UUID.randomUUID(), "STAFF")).contentType(MediaType.APPLICATION_JSON).content(perKm))
+                .andExpect(status().isForbidden());
+
+        // check-in / check-out / tra cứu QR: chỉ người có TICKET_VALIDATE
+        String scan = "{\"qrToken\":\"abc\",\"stationId\":1}";
+        for (String path : List.of("/api/v1/gates/check-in", "/api/v1/gates/check-out", "/api/v1/gates/inspect")) {
+            mvc.perform(post(path).contentType(MediaType.APPLICATION_JSON).content(scan))
+                    .andExpect(status().isUnauthorized());
+            mvc.perform(post(path).with(as(UUID.randomUUID(), "PASSENGER")).contentType(MediaType.APPLICATION_JSON).content(scan))
+                    .andExpect(status().isForbidden());
+            mvc.perform(post(path).with(as(UUID.randomUUID(), "STAFF")).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"stationId\":1}"))
+                    .andExpect(status().isBadRequest());
+        }
+        // ảnh QR cần đăng nhập; vé không tồn tại → 404
+        mvc.perform(get("/api/v1/tickets/" + UUID.randomUUID() + "/qr")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/tickets/" + UUID.randomUUID() + "/qr").with(as(realUser(), "PASSENGER")))
+                .andExpect(status().isNotFound());
+    }
+
     @Test
     void ticketProductManagementRbac() throws Exception {
         String body = "{\"code\":\"WEEK_3\",\"name\":\"Vé 3 tuần\",\"durationUnit\":\"WEEK\",\"durationValue\":3,"

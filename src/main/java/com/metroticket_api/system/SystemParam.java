@@ -60,6 +60,19 @@ public class SystemParam {
         this.createdAt = createdAt;
     }
 
+    /** Dòng đầu tiên của một tham số mới (ví dụ đơn giá/km khi tạo loại vé lượt). */
+    SystemParam(String paramKey, String paramGroup, String value, String description, Instant effectiveFrom,
+            UUID updatedBy, Instant createdAt) {
+        this.paramKey = paramKey;
+        this.paramGroup = paramGroup;
+        this.valueType = "int";
+        this.description = description;
+        this.paramValue = value;
+        this.effectiveFrom = effectiveFrom;
+        this.updatedBy = updatedBy;
+        this.createdAt = createdAt;
+    }
+
     void close(Instant at) {
         this.effectiveTo = at;
     }

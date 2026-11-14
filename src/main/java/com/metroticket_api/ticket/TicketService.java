@@ -43,7 +43,8 @@ import com.metroticket_api.ticket.TicketDtos.ValidationResponse;
  *   <li>Phải kích hoạt (quẹt vào lần đầu) trong activation_window_days kể từ lúc mua. Hạn dùng tính từ lần quẹt
  *       đầu: ngày/tuần theo đủ 24 giờ, tháng theo lịch (giờ Việt Nam). Mua 3 tháng → hạn = kích hoạt + 3 tháng.</li>
  *   <li>Vé lưu snapshot thời lượng, số kỳ, đơn giá: admin đổi loại vé sau đó không ảnh hưởng vé đã bán.</li>
- *   <li>Vé lượt: giá theo km lộ trình ngắn nhất (FareService), dùng được đến hết ngày mua, không có ưu đãi sinh viên.</li>
+ *   <li>Vé lượt: giá = km lộ trình ngắn nhất × đơn giá/km của loại vé (tham số FARE_PER_KM_&lt;mã&gt;), làm tròn
+ *       lên theo FARE_ROUNDING_VND, tối thiểu FARE_MIN_VND (FareService); dùng được đến hết ngày mua, không có ưu đãi sinh viên.</li>
  *   <li>Vé đã mua không được hoàn tiền (đơn chưa thanh toán thì huỷ và hoàn lại điểm đã trừ).</li>
  *   <li>Có thể dùng điểm CPoint giảm giá: 1 điểm = 1 đồng, không vượt số dư và mức giảm tối đa.</li>
  *   <li>Mua online chỉ bằng SEPAY_QR (giả lập CARD/E_WALLET chỉ ở dev).</li>
@@ -173,6 +174,25 @@ public class TicketService {
         return TicketResponse.of(ticket, owner, false, owner ? pendingInstruction(ticket) : null);
     }
 
+    /**
+     * Ảnh PNG mã QR của vé, chỉ chủ vé lấy được và chỉ khi vé đã thanh toán, còn dùng được (ACTIVE / IN_USE).
+     * Nội dung QR là qrToken, nhân viên quét để check-in / check-out tại cổng.
+     */
+    @Transactional(readOnly = true)
+    public byte[] qrImage(UUID ticketId, int size) {
+        Ticket ticket = tickets.findById(ticketId)
+                .filter(t -> t.getUserId().equals(CurrentUser.id()))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy vé"));
+        if (!ticket.getStatus().hasUsableQr()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, switch (ticket.getStatus()) {
+                case PENDING_PAYMENT -> "Vé chưa được thanh toán, chưa có mã QR";
+                case USED -> "Vé lượt đã được sử dụng";
+                default -> "Vé không còn sử dụng được (" + ticket.getStatus() + ")";
+            });
+        }
+        return QrCodeRenderer.png(ticket.getQrToken(), size);
+    }
+
     @Transactional(readOnly = true)
     public List<ValidationResponse> history(UUID ticketId) {
         requireReadable(ticketId);
@@ -207,9 +227,9 @@ public class TicketService {
         }
         com.metroticket_api.metro.station.Station origin = requireActiveStation(request.originStationId());
         com.metroticket_api.metro.station.Station destination = requireActiveStation(request.destinationStationId());
-        FareService.Quote quote = fares.quote(origin.getId(), destination.getId())
+        FareService.Quote quote = fares.quote(ticket.getProduct().getCode(), origin.getId(), destination.getId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy lộ trình phù hợp"));
-        ticket.assignJourney(origin, destination, quote.distanceKm(), quote.priceVnd());
+        ticket.assignJourney(origin, destination, quote.distanceKm(), quote.farePerKmVnd(), quote.priceVnd());
     }
 
     private com.metroticket_api.metro.station.Station requireActiveStation(Long id) {

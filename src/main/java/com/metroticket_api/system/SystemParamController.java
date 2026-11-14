@@ -24,7 +24,7 @@ public class SystemParamController {
 
     public record ParamView(String key, String group, String value, String valueType, String description,
             Instant effectiveFrom, Instant effectiveTo) {
-        static ParamView of(SystemParam p) {
+        public static ParamView of(SystemParam p) {
             return new ParamView(p.getParamKey(), p.getParamGroup(), p.getParamValue(), p.getValueType(),
                     p.getDescription(), p.getEffectiveFrom(), p.getEffectiveTo());
         }

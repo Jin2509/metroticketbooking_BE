@@ -1,5 +1,6 @@
 package com.metroticket_api.ticket;
 
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
@@ -20,18 +21,21 @@ import com.metroticket_api.payment.PaymentPurpose;
 import com.metroticket_api.payment.PaymentService;
 import com.metroticket_api.rbac.PermissionCodes;
 import com.metroticket_api.security.CurrentUser;
+import com.metroticket_api.ticket.TicketDtos.GateInspectResponse;
 import com.metroticket_api.ticket.TicketDtos.GateValidationRequest;
 import com.metroticket_api.ticket.TicketDtos.GateValidationResponse;
 import com.metroticket_api.ticket.TicketDtos.StationRef;
 
 /**
- * Soát vé tại cổng (nhân viên quét QR trên app hành khách). Vé theo thời gian vào/ra ở ga nào cũng được; vé lượt phải
- * vào đúng ga đi, dùng một lần, ra quá ga đã mua thì thu bù chênh lệch, đi ít hơn không hoàn tiền.
+ * Soát vé tại cổng: nhân viên ga quét QR trên app hành khách để check-in (quẹt vào) / check-out (quẹt ra).
+ * Vé theo thời gian vào/ra ở ga nào cũng được; vé lượt phải vào đúng ga đi, dùng một lần, ra quá ga đã mua thì thu
+ * bù chênh lệch (tính theo đơn giá/km lúc mua), đi ít hơn không hoàn tiền.
  *
- * <p><b>Quẹt vào</b>: vé ACTIVE, còn hạn (chưa kích hoạt: còn hạn kích hoạt), ga đang ACTIVE. Vé đang IN_USE bị chặn
- * (chống dùng 1 vé cho 2 người – anti-passback). Lần quẹt vào đầu tiên kích hoạt vé.</p>
- * <p><b>Quẹt ra</b>: vé phải IN_USE; đã ở trong ga thì luôn được ra kể cả vé vừa hết hạn.</p>
- * <p>Mọi lượt quẹt (kể cả bị từ chối) được ghi vào ticket_validation; từ chối trả HTTP 200 với result = REJECTED.</p>
+ * <p><b>Check-in</b>: vé ACTIVE, còn hạn (chưa kích hoạt: còn hạn kích hoạt), ga đang ACTIVE. Vé đang IN_USE bị chặn
+ * (chống dùng 1 vé cho 2 người – anti-passback). Lần check-in đầu tiên kích hoạt vé.</p>
+ * <p><b>Check-out</b>: vé phải IN_USE; đã ở trong ga thì luôn được ra kể cả vé vừa hết hạn.</p>
+ * <p>Mọi lượt quét (kể cả bị từ chối) được ghi vào ticket_validation; từ chối trả HTTP 200 với result = REJECTED.
+ * Tra cứu (inspect) chỉ xem trước kết quả, không đổi trạng thái vé và không ghi nhật ký.</p>
  */
 @Service
 public class GateService {
@@ -72,8 +76,7 @@ public class GateService {
 
     @Transactional
     public GateValidationResponse validate(GateValidationRequest request) {
-        Station station = stations.findById(request.stationId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy nhà ga"));
+        Station station = requireStation(request.stationId());
         staffStations.requireOnDutyAt(station.getId(), PermissionCodes.STATION_MANAGE);
         UUID operator = CurrentUser.optionalId().orElse(null);
         Instant now = clock.instant();
@@ -86,6 +89,10 @@ public class GateService {
         Decision decision = request.direction() == GateDirection.ENTRY
                 ? checkEntry(ticket, station, now)
                 : checkExit(ticket);
+        if (!decision.accepted() && request.direction() == GateDirection.ENTRY
+                && ticket.getStatus() == TicketStatus.ACTIVE && !now.isBefore(ticket.getValidUntil())) {
+            ticket.expire();
+        }
         Integer fareDifference = null;
         if (decision.accepted() && request.direction() == GateDirection.EXIT && ticket.isSingleJourney()) {
             int extra = extraFare(ticket, station);
@@ -114,6 +121,36 @@ public class GateService {
         return record(ticket, station, request.direction(), decision, operator, now, fareDifference);
     }
 
+    /**
+     * Nhân viên quét QR để xem vé và kết quả dự kiến tại ga này trước khi cho qua: hướng tiếp theo (vào/ra), có được
+     * chấp nhận không, số tiền phải thu bù nếu vé lượt ra quá ga. Không đổi trạng thái vé.
+     */
+    @Transactional(readOnly = true)
+    public GateInspectResponse inspect(String qrToken, Long stationId) {
+        Station station = requireStation(stationId);
+        staffStations.requireOnDutyAt(station.getId(), PermissionCodes.STATION_MANAGE);
+        Ticket ticket = tickets.findByQrToken(qrToken.trim())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Mã vé không hợp lệ"));
+        GateDirection next = ticket.getStatus() == TicketStatus.IN_USE ? GateDirection.EXIT : GateDirection.ENTRY;
+        Instant now = clock.instant();
+        Decision decision = next == GateDirection.ENTRY ? checkEntry(ticket, station, now) : checkExit(ticket);
+        Integer fareDifference = null;
+        if (decision.accepted() && next == GateDirection.EXIT && ticket.isSingleJourney()) {
+            int extra = extraFare(ticket, station);
+            if (extra > 0) {
+                fareDifference = extra;
+                decision = Decision.reject("Đi quá ga đã mua, cần thu bù " + extra + " đ");
+            }
+        }
+        return new GateInspectResponse(next, decision.accepted() ? GateResult.ACCEPTED : GateResult.REJECTED,
+                decision.reason(), StationRef.of(station), ticket.getTicketCode(), ticket.getProduct().getCode(),
+                ticket.getProduct().getName(), ticket.getStatus(), ticket.isSingleJourney(),
+                StationRef.of(ticket.getOriginStation()), StationRef.of(ticket.getDestinationStation()),
+                StationRef.of(ticket.getLastEntryStation()), ticket.getLastEntryAt(), ticket.getValidUntil(),
+                fareDifference);
+    }
+
+    /** Không đổi trạng thái vé; vé quá hạn được chuyển EXPIRED ở {@link #validate}. */
     Decision checkEntry(Ticket ticket, Station station, Instant now) {
         Optional<String> unusable = unusableReason(ticket);
         if (unusable.isPresent()) {
@@ -126,7 +163,6 @@ public class GateService {
             return Decision.reject("Vé lượt chỉ được vào tại ga " + ticket.getOriginStation().getNameStation());
         }
         if (!now.isBefore(ticket.getValidUntil())) {
-            ticket.expire();
             return Decision.reject(ticket.getActivatedAt() == null ? "Vé đã quá hạn kích hoạt" : "Vé đã hết hạn");
         }
         if (now.isBefore(ticket.getValidFrom())) {
@@ -161,15 +197,32 @@ public class GateService {
         };
     }
 
-    /** Chênh lệch so với giá đã mua, tính từ ga thực tế vào đến ga ra. Ra sớm hơn thì bằng 0. */
-    private int extraFare(Ticket ticket, Station exit) {
+    /**
+     * Chênh lệch giữa giá quãng đường thực tế (ga vào → ga ra) và giá đã mua, tính theo đơn giá/km lúc mua.
+     * Ra sớm hơn hoặc ra đúng ga thì bằng 0.
+     */
+    int extraFare(Ticket ticket, Station exit) {
         Station entry = ticket.getLastEntryStation();
-        if (entry.getId().equals(exit.getId())) {
+        if (entry == null || entry.getId().equals(exit.getId())
+                || exit.getId().equals(ticket.getDestinationStation().getId()) && entry.getId().equals(ticket.getOriginStation().getId())) {
             return 0;
         }
-        return fares.quote(entry.getId(), exit.getId())
-                .map(q -> Math.max(0, q.priceVnd() - ticket.getListUnitPriceVnd()))
-                .orElse(0);
+        Optional<BigDecimal> km = fares.distanceKm(entry.getId(), exit.getId());
+        if (km.isEmpty() || km.get().compareTo(ticket.getDistanceKm()) <= 0) {
+            return 0;
+        }
+        int perKm = ticket.getFarePerKmVnd() != null ? ticket.getFarePerKmVnd()
+                : fares.quote(ticket.getProduct().getCode(), entry.getId(), exit.getId())
+                        .map(FareService.Quote::farePerKmVnd).orElse(0);
+        if (perKm <= 0) {
+            return 0;
+        }
+        return Math.max(0, fares.priceFor(km.get(), perKm) - ticket.getListUnitPriceVnd());
+    }
+
+    private Station requireStation(Long stationId) {
+        return stations.findById(stationId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy nhà ga"));
     }
 
     private GateValidationResponse record(Ticket ticket, Station station, GateDirection direction, Decision decision,

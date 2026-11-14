@@ -146,8 +146,13 @@ class AuthFlowIntegrationTest {
         String staffToken = login(email, "MatKhau@123");
         mvc.perform(get("/api/me").header("Authorization", "Bearer " + staffToken))
                 .andExpect(jsonPath("$.roles[0]").value("STAFF"))
+                // STAFF có thêm quyền soạn thông báo/báo sự cố tại ga (V16, V20) nhưng không có quyền quản trị
                 .andExpect(jsonPath("$.permissions").value(
-                        org.hamcrest.Matchers.containsInAnyOrder("TICKET_VALIDATE", "TICKET_VIEW_ALL", "TICKET_VIEW_OWN")));
+                        org.hamcrest.Matchers.hasItems("TICKET_VALIDATE", "TICKET_VIEW_ALL", "TICKET_VIEW_OWN")))
+                .andExpect(jsonPath("$.permissions").value(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.hasItems("USER_MANAGE"))))
+                .andExpect(jsonPath("$.permissions").value(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.hasItems("FARE_MANAGE"))));
 
         // Sai mật khẩu và email không tồn tại trả cùng một lỗi
         mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)

@@ -125,8 +125,11 @@ public class IncidentService {
         return s;
     }
 
+    /** Nạp sẵn ga vì controller dựng IncidentView sau khi transaction đã đóng (open-in-view=false). */
     private Incident require(Long id) {
-        return incidents.findByIdForUpdate(id)
+        Incident incident = incidents.findByIdForUpdate(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy sự cố"));
+        org.hibernate.Hibernate.initialize(incident.getStation());
+        return incident;
     }
 }

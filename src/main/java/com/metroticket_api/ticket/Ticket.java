@@ -84,6 +84,10 @@ public class Ticket {
     @Column(name = "distance_km", precision = 8, scale = 3)
     private java.math.BigDecimal distanceKm;
 
+    /** Đơn giá/km của loại vé lượt tại lúc mua, dùng để tính bù khi ra quá ga. */
+    @Column(name = "fare_per_km_vnd")
+    private Integer farePerKmVnd;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private TicketStatus status;
@@ -202,10 +206,11 @@ public class Ticket {
     }
 
     /** Gắn hành trình và giá theo quãng đường, gọi trước khi trừ điểm. */
-    void assignJourney(Station origin, Station destination, java.math.BigDecimal km, int fareVnd) {
+    void assignJourney(Station origin, Station destination, java.math.BigDecimal km, int farePerKmVnd, int fareVnd) {
         this.originStation = origin;
         this.destinationStation = destination;
         this.distanceKm = km;
+        this.farePerKmVnd = farePerKmVnd;
         this.listUnitPriceVnd = fareVnd;
         this.unitPriceVnd = fareVnd;
         this.priceVnd = fareVnd;
@@ -271,6 +276,7 @@ public class Ticket {
     public Station getOriginStation() { return originStation; }
     public Station getDestinationStation() { return destinationStation; }
     public java.math.BigDecimal getDistanceKm() { return distanceKm; }
+    public Integer getFarePerKmVnd() { return farePerKmVnd; }
     public Instant getPurchasedAt() { return purchasedAt; }
     public Instant getValidFrom() { return validFrom; }
     public Instant getValidUntil() { return validUntil; }

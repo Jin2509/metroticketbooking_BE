@@ -51,7 +51,7 @@ public class TicketPriceService {
         TicketProduct product = products.findById(productId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy loại vé"));
         if (product.isSingleJourney()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Giá vé lượt được quản lý theo bảng giá quãng đường");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Giá vé lượt tính theo km, hãy đổi đơn giá/km (PUT /fares/{mã}/per-km)");
         }
         Instant now = clock.instant();
         if (effectiveFrom.isBefore(now)) {

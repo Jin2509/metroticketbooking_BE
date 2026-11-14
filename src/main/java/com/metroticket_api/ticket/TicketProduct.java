@@ -16,7 +16,8 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 
 /**
- * Loại vé theo thời gian: thời lượng = durationValue × durationUnit (1 ngày, 3 ngày, 1 tuần, 1 tháng...).
+ * Loại vé theo thời gian: thời lượng = durationValue × durationUnit (1 ngày, 3 ngày, 1 tuần, 1 tháng...),
+ * hoặc loại vé lượt (singleJourney) có giá theo km.
  * Mã loại vé không đổi được sau khi tạo; thời lượng chỉ đổi được khi chưa bán vé nào.
  */
 @Entity
@@ -59,7 +60,7 @@ public class TicketProduct {
     @Column(nullable = false, length = 20)
     private ProductStatus status = ProductStatus.ACTIVE;
 
-    /** Vé lượt: giá tính theo bảng fare_band tại lúc mua, không dùng priceVnd. */
+    /** Vé lượt: giá tính theo km × tham số FARE_PER_KM_&lt;mã&gt; tại lúc mua; priceVnd chỉ là giá tối thiểu để hiển thị. */
     @Column(name = "single_journey", nullable = false)
     private boolean singleJourney;
 
@@ -95,6 +96,15 @@ public class TicketProduct {
         this.status = status == null ? ProductStatus.ACTIVE : status;
         this.createdBy = createdBy;
         this.updatedBy = createdBy;
+    }
+
+    /** Loại vé lượt: dùng trong ngày mua (1 ngày, 1 kỳ), giá theo quãng đường. */
+    public static TicketProduct singleJourney(String code, String name, String description, int displayPriceVnd,
+            ProductStatus status, UUID createdBy) {
+        TicketProduct p = new TicketProduct(code, name, description, DurationUnit.DAY, 1, displayPriceVnd, 1, 1, status,
+                createdBy);
+        p.singleJourney = true;
+        return p;
     }
 
     @PrePersist

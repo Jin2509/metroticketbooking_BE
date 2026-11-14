@@ -13,6 +13,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.metroticket_api.security.CurrentUser;
+import com.metroticket_api.system.SystemParamKey;
+import com.metroticket_api.system.SystemParamService;
 import com.metroticket_api.ticket.TicketProductAudit.Action;
 import com.metroticket_api.ticket.TicketProductDtos.AuditResponse;
 import com.metroticket_api.ticket.TicketProductDtos.CreateProductRequest;
@@ -21,7 +23,7 @@ import com.metroticket_api.ticket.TicketProductDtos.PublicProductResponse;
 import com.metroticket_api.ticket.TicketProductDtos.UpdateProductRequest;
 
 /**
- * Quản lý loại vé theo thời gian (quyền FARE_MANAGE).
+ * Quản lý loại vé theo thời gian và loại vé lượt (quyền FARE_MANAGE).
  *
  * <ul>
  *   <li><b>Thêm</b>: mã duy nhất (viết hoa); thời lượng hợp lệ theo đơn vị (DAY 1–6, WEEK 1–3, MONTH 1–12); chỉ vé
@@ -40,10 +42,12 @@ public class TicketProductService {
     private final TicketProductRepository products;
     private final TicketRepository tickets;
     private final TicketProductAuditRepository audits;
+    private final SystemParamService params;
     private final Clock clock;
 
     public TicketProductService(TicketProductRepository products, TicketRepository tickets,
-            TicketProductAuditRepository audits, Clock clock) {
+            TicketProductAuditRepository audits, SystemParamService params, Clock clock) {
+        this.params = params;
         this.products = products;
         this.tickets = tickets;
         this.audits = audits;
@@ -52,7 +56,9 @@ public class TicketProductService {
 
     @Transactional(readOnly = true)
     public List<PublicProductResponse> listActive() {
-        return products.findByStatusOrderByIdAsc(ProductStatus.ACTIVE).stream().map(PublicProductResponse::of).toList();
+        return products.findByStatusOrderByIdAsc(ProductStatus.ACTIVE).stream()
+                .map(p -> PublicProductResponse.of(p, p.isSingleJourney() ? params.farePerKm(p.getCode()) : null))
+                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -79,9 +85,18 @@ public class TicketProductService {
         if (products.existsByCode(code)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Mã loại vé " + code + " đã tồn tại");
         }
+        UUID actor = CurrentUser.optionalId().orElse(null);
+        if (Boolean.TRUE.equals(request.singleJourney())) {
+            return createSingleJourney(code, request, actor);
+        }
+        if (request.durationUnit() == null || request.durationValue() == null || request.priceVnd() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Vé theo thời gian phải có thời lượng và giá");
+        }
+        if (request.farePerKmVnd() != null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Chỉ vé lượt mới có đơn giá theo km");
+        }
         int maxPeriods = request.maxPeriods() == null ? 1 : request.maxPeriods();
         int window = request.activationWindowDays() == null ? 30 : request.activationWindowDays();
-        UUID actor = CurrentUser.optionalId().orElse(null);
         TicketProduct product = new TicketProduct(code, request.name().trim(), blankToNull(request.description()),
                 request.durationUnit(), request.durationValue(), request.priceVnd(), maxPeriods, window,
                 request.status(), actor);
@@ -92,6 +107,21 @@ public class TicketProductService {
         products.saveAndFlush(product);
         audit(product, Action.CREATED, actor, "code=" + code + ", thời lượng=" + product.durationLabel()
                 + ", giá=" + product.getPriceVnd() + ", tối đa " + maxPeriods + " kỳ, trạng thái=" + product.getStatus());
+        return ProductResponse.of(product, false);
+    }
+
+    /** Loại vé lượt mới: tạo luôn tham số đơn giá/km FARE_PER_KM_&lt;mã&gt;; giá hiển thị = giá tối thiểu hiện hành. */
+    private ProductResponse createSingleJourney(String code, CreateProductRequest request, UUID actor) {
+        if (request.farePerKmVnd() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Vé lượt phải có đơn giá theo km (farePerKmVnd)");
+        }
+        int displayPrice = Math.max(1, params.intValue(SystemParamKey.FARE_MIN_VND));
+        TicketProduct product = TicketProduct.singleJourney(code, request.name().trim(), blankToNull(request.description()),
+                displayPrice, request.status(), actor);
+        products.saveAndFlush(product);
+        params.createFarePerKm(code, product.getName(), request.farePerKmVnd());
+        audit(product, Action.CREATED, actor, "code=" + code + ", vé lượt, đơn giá " + request.farePerKmVnd()
+                + " đ/km, trạng thái=" + product.getStatus());
         return ProductResponse.of(product, false);
     }
 

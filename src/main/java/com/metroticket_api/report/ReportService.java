@@ -83,7 +83,13 @@ public class ReportService {
                 + " WHERE tv.result = 'ACCEPTED' AND tv.direction = 'ENTRY' AND tv.validated_at >= ? AND tv.validated_at < ?"
                 + " GROUP BY 1 ORDER BY 1";
         List<Row> rows = jdbc.query(sql, (rs, i) -> new Row(rs.getString("label"), rs.getLong("c"), null), start(from), end(to));
-        return new Report("Lưu lượng theo " + group, from, to, rows.stream().mapToLong(Row::count).sum(), null, rows);
+        // Ga chuyển tuyến thuộc nhiều tuyến nên mỗi lượt được tính cho từng tuyến; tổng phải đếm theo lượt thực tế
+        long total = group == TrafficGroup.LINE
+                ? jdbc.queryForObject("SELECT count(*) FROM ticket_validation tv WHERE tv.result = 'ACCEPTED'"
+                        + " AND tv.direction = 'ENTRY' AND tv.validated_at >= ? AND tv.validated_at < ?", Long.class,
+                        start(from), end(to))
+                : rows.stream().mapToLong(Row::count).sum();
+        return new Report("Lưu lượng theo " + group, from, to, total, null, rows);
     }
 
     private static void validate(LocalDate from, LocalDate to) {

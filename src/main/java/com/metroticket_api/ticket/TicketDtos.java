@@ -59,7 +59,7 @@ public class TicketDtos {
             String discountCode, int discountPercent, int unitPriceVnd, int priceVnd, TicketStatus status, Instant purchasedAt, Instant validFrom, Instant validUntil,
             Instant activatedAt, StationRef lastEntryStation, Instant lastEntryAt, int tripsCount, boolean refundable,
             Instant refundedAt, PaymentInstruction payment, int pointsUsed, StationRef originStation,
-            StationRef destinationStation, java.math.BigDecimal distanceKm) {
+            StationRef destinationStation, java.math.BigDecimal distanceKm, Integer farePerKmVnd) {
         static TicketResponse of(Ticket t, boolean includeQr, boolean refundable) {
             return of(t, includeQr, refundable, null);
         }
@@ -72,7 +72,8 @@ public class TicketDtos {
                     t.getUnitPriceVnd(), t.getPriceVnd(), t.getStatus(), t.getPurchasedAt(),
                     t.getValidFrom(), t.getValidUntil(), t.getActivatedAt(), StationRef.of(t.getLastEntryStation()),
                     t.getLastEntryAt(), t.getTripsCount(), refundable, t.getRefundedAt(), payment, t.getPointsUsed(),
-                    StationRef.of(t.getOriginStation()), StationRef.of(t.getDestinationStation()), t.getDistanceKm());
+                    StationRef.of(t.getOriginStation()), StationRef.of(t.getDestinationStation()), t.getDistanceKm(),
+                    t.getFarePerKmVnd());
         }
     }
 
@@ -93,6 +94,29 @@ public class TicketDtos {
         public GateValidationRequest(String qrToken, Long stationId, GateDirection direction) {
             this(qrToken, stationId, direction, null);
         }
+    }
+
+    /** Check-in / check-out tại cổng: hướng quét do endpoint quyết định. */
+    public record GateScanRequest(
+            @NotBlank @Size(max = 64) String qrToken,
+            @NotNull Long stationId,
+            PaymentMethod fareAdjustmentMethod) {
+        public GateValidationRequest toValidation(GateDirection direction) {
+            return new GateValidationRequest(qrToken, stationId, direction, fareAdjustmentMethod);
+        }
+    }
+
+    public record GateInspectRequest(@NotBlank @Size(max = 64) String qrToken, @NotNull Long stationId) {
+    }
+
+    /**
+     * Kết quả xem trước khi nhân viên quét QR: nextDirection là thao tác tiếp theo (vé đang trong hành trình thì EXIT),
+     * expectedResult/reason là kết quả nếu thực hiện ngay, fareDifferenceVnd là số tiền cần thu bù (vé lượt ra quá ga).
+     */
+    public record GateInspectResponse(GateDirection nextDirection, GateResult expectedResult, String reason,
+            StationRef station, String ticketCode, String productCode, String productName, TicketStatus ticketStatus,
+            boolean singleJourney, StationRef originStation, StationRef destinationStation, StationRef lastEntryStation,
+            Instant lastEntryAt, Instant validUntil, Integer fareDifferenceVnd) {
     }
 
     public record GateValidationResponse(GateResult result, String reason, GateDirection direction,

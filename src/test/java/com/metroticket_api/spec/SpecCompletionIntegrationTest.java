@@ -103,7 +103,7 @@ import com.metroticket_api.user.UserStatus;
         ParkingBookingPaymentFulfiller.class, ParkingBookingService.class, ParkingService.class, StaffStationService.class,
         RolePermissionCache.class, SystemParamService.class, com.metroticket_api.audit.AuditLogService.class,
         LoyaltyService.class, com.metroticket_api.ticket.FareService.class, TicketPriceService.class, ReconciliationService.class, IncidentService.class,
-        ReportService.class, ChatFaqService.class })
+        ReportService.class, ChatFaqService.class, com.metroticket_api.ticket.TicketProductService.class })
 class SpecCompletionIntegrationTest {
 
     /** 10:00 giờ Việt Nam. */
@@ -174,6 +174,8 @@ class SpecCompletionIntegrationTest {
     @Autowired UserRepository users;
     @Autowired StationRepository stations;
     @Autowired JdbcTemplate jdbc;
+    @Autowired com.metroticket_api.ticket.FareService fares;
+    @Autowired com.metroticket_api.ticket.TicketProductService productService;
 
     Map<String, Long> stationIds;
     UUID passenger;
@@ -410,7 +412,7 @@ class SpecCompletionIntegrationTest {
         gates.validate(new GateValidationRequest(qr, station, GateDirection.ENTRY));
 
         assertThat(reports.traffic(day, day, TrafficGroup.STATION).totalCount()).isEqualTo(1);
-        assertThat(reports.traffic(day, day, TrafficGroup.LINE).totalCount()).isGreaterThanOrEqualTo(1);
+        assertThat(reports.traffic(day, day, TrafficGroup.LINE).totalCount()).isEqualTo(1);
         assertThat(reports.traffic(day, day, TrafficGroup.HOUR).rows().get(0).label()).isEqualTo("10");
         assertThatThrownBy(() -> reports.revenue(day, day.minusDays(1), RevenueGroup.DAY))
                 .hasMessageContaining("Khoảng thời gian không hợp lệ");
@@ -488,6 +490,126 @@ class SpecCompletionIntegrationTest {
         var out = gate(qr, "ST002", GateDirection.EXIT, null);
         assertThat(out.result()).isEqualTo(com.metroticket_api.ticket.GateResult.ACCEPTED);
         assertThat(out.fareDifferenceVnd()).isNull();
+    }
+
+    /** Giá kỳ vọng theo công thức, tính độc lập với FareService. */
+    private static int expectedFare(java.math.BigDecimal km, int perKm, int rounding, int min) {
+        java.math.BigDecimal raw = km.multiply(java.math.BigDecimal.valueOf(perKm));
+        int rounded = raw.divide(java.math.BigDecimal.valueOf(rounding), 0, java.math.RoundingMode.CEILING).intValueExact() * rounding;
+        return Math.max(min, rounded);
+    }
+
+    private java.math.BigDecimal km(String from, String to) {
+        return fares.distanceKm(stationIds.get(from), stationIds.get(to)).orElseThrow();
+    }
+
+    @Test
+    void singleFareIsKmTimesParamRoundedUp() {
+        java.math.BigDecimal km = km("ST001", "ST010");
+        assertThat(params.farePerKm("SINGLE")).isEqualTo(1000);
+        TicketResponse before = buySingle("ST001", "ST010");
+        assertThat(before.priceVnd()).isEqualTo(expectedFare(km, 1000, 1000, 7000));
+        assertThat(before.priceVnd() % 1000).isZero();
+        assertThat(before.farePerKmVnd()).isEqualTo(1000);
+        assertThat(java.math.BigDecimal.valueOf(before.priceVnd())).isGreaterThanOrEqualTo(km.multiply(java.math.BigDecimal.valueOf(1000)));
+
+        // admin đổi đơn giá/km và bước làm tròn: vé mua sau tính theo giá mới, vé cũ giữ nguyên
+        loginAs(newUser(), "FARE_MANAGE");
+        fares.updateFarePerKm("SINGLE", 1500, null);
+        params.update("FARE_ROUNDING_VND", 500, null);
+        loginAs(passenger, "TICKET_BUY", "PARKING_BUY");
+        TicketResponse after = buySingle("ST001", "ST010");
+        assertThat(after.priceVnd()).isEqualTo(expectedFare(km, 1500, 500, 7000));
+        assertThat(after.farePerKmVnd()).isEqualTo(1500);
+        assertThat(tickets.get(before.id()).priceVnd()).isEqualTo(expectedFare(km, 1000, 1000, 7000));
+        assertThat(params.history("FARE_PER_KM_SINGLE")).hasSize(2);
+
+        // quãng ngắn không thấp hơn giá tối thiểu
+        assertThat(buySingle("ST001", "ST002").priceVnd()).isEqualTo(7000);
+        assertThatThrownBy(() -> fares.updateFarePerKm("DAY_1", 1000, null)).hasMessageContaining("không phải vé lượt");
+        assertThatThrownBy(() -> params.update("FARE_PER_KM_SINGLE", 0, null)).hasMessageContaining("phải từ");
+        assertThatThrownBy(() -> params.update("FARE_PER_KM_KHONG_CO", 1000, null)).hasMessageContaining("Không có tham số");
+    }
+
+    @Test
+    void eachSingleJourneyTypeHasItsOwnRate() {
+        loginAs(newUser(), "FARE_MANAGE");
+        var express = productService.create(new com.metroticket_api.ticket.TicketProductDtos.CreateProductRequest(
+                "single_express", "Vé lượt nhanh", null, null, null, null, null, null, null, true, 2500));
+        assertThat(express.singleJourney()).isTrue();
+        assertThat(express.code()).isEqualTo("SINGLE_EXPRESS");
+        assertThat(params.farePerKm("SINGLE_EXPRESS")).isEqualTo(2500);
+        assertThatThrownBy(() -> productService.create(new com.metroticket_api.ticket.TicketProductDtos.CreateProductRequest(
+                "SINGLE_X", "Thiếu giá", null, null, null, null, null, null, null, true, null)))
+                .hasMessageContaining("farePerKmVnd");
+        assertThat(productService.listActive()).filteredOn(p -> p.code().equals("SINGLE_EXPRESS"))
+                .singleElement().satisfies(p -> assertThat(p.farePerKmVnd()).isEqualTo(2500));
+        assertThat(fares.list()).extracting(com.metroticket_api.ticket.FareService.FareConfig::productCode)
+                .contains("SINGLE", "SINGLE_EXPRESS");
+
+        loginAs(passenger, "TICKET_BUY", "PARKING_BUY");
+        java.math.BigDecimal km = km("ST001", "ST010");
+        TicketResponse normal = buySingle("ST001", "ST010");
+        TicketResponse fast = tickets.purchase(new PurchaseTicketRequest("SINGLE_EXPRESS", 1, PaymentMethod.SEPAY_QR, null, null,
+                stationIds.get("ST001"), stationIds.get("ST010")));
+        assertThat(normal.priceVnd()).isEqualTo(expectedFare(km, 1000, 1000, 7000));
+        assertThat(fast.priceVnd()).isEqualTo(expectedFare(km, 2500, 1000, 7000));
+        assertThat(fares.quote("SINGLE_EXPRESS", stationIds.get("ST001"), stationIds.get("ST010")).orElseThrow().priceVnd())
+                .isEqualTo(fast.priceVnd());
+    }
+
+    @Test
+    void staffInspectsQrThenChecksInAndOutWithFareDifferenceAtPurchaseRate() {
+        TicketResponse bought = buySingle("ST001", "ST002");
+        String qr = paidQr(bought);
+        // admin tăng giá sau khi khách đã mua: bù vé vẫn tính theo đơn giá lúc mua
+        loginAs(newUser(), "FARE_MANAGE");
+        fares.updateFarePerKm("SINGLE", 5000, null);
+
+        loginAs(newUser(), "TICKET_VALIDATE", "STATION_MANAGE", "TICKET_VIEW_ALL");
+        var before = gates.inspect(qr, stationIds.get("ST001"));
+        assertThat(before.nextDirection()).isEqualTo(GateDirection.ENTRY);
+        assertThat(before.expectedResult()).isEqualTo(com.metroticket_api.ticket.GateResult.ACCEPTED);
+        assertThat(before.singleJourney()).isTrue();
+        assertThat(before.destinationStation().code()).isEqualTo("ST002");
+        assertThat(gates.inspect(qr, stationIds.get("ST003")).reason()).contains("chỉ được vào tại ga");
+        assertThat(tickets.get(bought.id()).status()).isEqualTo(TicketStatus.ACTIVE); // inspect không đổi trạng thái
+
+        var in = gates.validate(new com.metroticket_api.ticket.TicketDtos.GateScanRequest(qr, stationIds.get("ST001"), null)
+                .toValidation(GateDirection.ENTRY));
+        assertThat(in.result()).isEqualTo(com.metroticket_api.ticket.GateResult.ACCEPTED);
+
+        var atFar = gates.inspect(qr, stationIds.get("ST010"));
+        int expectedExtra = expectedFare(km("ST001", "ST010"), 1000, 1000, 7000) - bought.priceVnd();
+        assertThat(atFar.nextDirection()).isEqualTo(GateDirection.EXIT);
+        assertThat(atFar.expectedResult()).isEqualTo(com.metroticket_api.ticket.GateResult.REJECTED);
+        assertThat(atFar.fareDifferenceVnd()).isEqualTo(expectedExtra);
+        assertThat(gates.inspect(qr, stationIds.get("ST002")).expectedResult()).isEqualTo(com.metroticket_api.ticket.GateResult.ACCEPTED);
+
+        var out = gates.validate(new GateValidationRequest(qr, stationIds.get("ST010"), GateDirection.EXIT, PaymentMethod.CASH));
+        assertThat(out.result()).isEqualTo(com.metroticket_api.ticket.GateResult.ACCEPTED);
+        assertThat(out.fareDifferenceVnd()).isEqualTo(expectedExtra);
+        assertThat(out.ticketStatus()).isEqualTo(TicketStatus.USED);
+        assertThatThrownBy(() -> gates.inspect("khong-ton-tai", stationIds.get("ST001"))).hasMessageContaining("không hợp lệ");
+    }
+
+    @Test
+    void ownerGetsPngQrThatEncodesTheTicketToken() throws Exception {
+        TicketResponse bought = buySingle("ST001", "ST002");
+        assertThatThrownBy(() -> tickets.qrImage(bought.id(), 256)).hasMessageContaining("chưa được thanh toán");
+        String qr = paidQr(bought);
+
+        byte[] png = tickets.qrImage(bought.id(), 256);
+        assertThat(png).startsWith(0x89, 'P', 'N', 'G');
+        java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(png));
+        assertThat(image.getWidth()).isEqualTo(256);
+        String decoded = new com.google.zxing.MultiFormatReader().decode(new com.google.zxing.BinaryBitmap(
+                new com.google.zxing.common.HybridBinarizer(new com.google.zxing.client.j2se.BufferedImageLuminanceSource(image))))
+                .getText();
+        assertThat(decoded).isEqualTo(qr);
+
+        loginAs(newUser(), "TICKET_BUY");
+        assertThatThrownBy(() -> tickets.qrImage(bought.id(), 256)).hasMessageContaining("Không tìm thấy vé");
     }
 
     @Test
