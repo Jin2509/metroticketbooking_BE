@@ -21,6 +21,7 @@ import org.springframework.data.domain.Pageable;
 import com.lowagie.text.pdf.PdfReader;
 import com.lowagie.text.pdf.parser.PdfTextExtractor;
 import com.metroticket_api.chatbot.ChatFaqRepository;
+import com.metroticket_api.chatbot.ChatFaqSearchService;
 import com.metroticket_api.chatbot.ChatMessage;
 import com.metroticket_api.chatbot.ChatMessageRepository;
 import com.metroticket_api.chatbot.ChatSession;
@@ -28,6 +29,7 @@ import com.metroticket_api.chatbot.ChatSessionRepository;
 import com.metroticket_api.chatbot.ChatbotService;
 import com.metroticket_api.chatbot.ChatbotTools;
 import com.metroticket_api.chatbot.GeminiChatClient;
+import com.metroticket_api.chatbot.GeminiEmbeddingClient;
 import com.metroticket_api.report.ReportExporter;
 import com.metroticket_api.report.ReportService;
 
@@ -41,9 +43,10 @@ class SpecCompletionUnitTest {
     private final ChatSessionRepository sessions = mock(ChatSessionRepository.class);
     private final ChatMessageRepository messages = mock(ChatMessageRepository.class);
     private final ChatFaqRepository faqs = mock(ChatFaqRepository.class);
+    private final ChatFaqSearchService faqSearch = new ChatFaqSearchService(faqs, mock(GeminiEmbeddingClient.class));
     private final GeminiChatClient gemini = mock(GeminiChatClient.class);
     private final ChatbotTools tools = mock(ChatbotTools.class);
-    private final ChatbotService chatbot = new ChatbotService(sessions, messages, faqs, gemini, tools, Clock.systemUTC());
+    private final ChatbotService chatbot = new ChatbotService(sessions, messages, faqSearch, gemini, tools, Clock.systemUTC());
     private final UUID user = UUID.randomUUID();
 
     private void stubRepositories() {
@@ -72,6 +75,27 @@ class SpecCompletionUnitTest {
         assertThat(answer.answer()).isEqualTo("Bạn có 120 điểm.");
         assertThat(answer.actionCalled()).isEqualTo("get_my_points");
         verify(tools).execute(eq("get_my_points"), any(), eq(user));
+    }
+
+    @Test
+    void ambiguousPlaceReturnsChoicesAndAsksUserToClarify() throws Exception {
+        stubRepositories();
+        when(tools.execute(eq("find_place_and_nearest_stations"), any(), eq(user))).thenReturn(Map.of(
+                "result", Map.of("status", "CLARIFICATION_REQUIRED", "choices", List.of(
+                        Map.of("address", "Landmark 81, Bình Thạnh",
+                                "nearestStations", List.of(Map.of("name", "Tân Cảng", "distanceMeters", 650))),
+                        Map.of("address", "Central Park, Quận 7", "nearestStations", List.of())))));
+        when(gemini.generate(any(), any(), any())).thenReturn(content(
+                "{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"name\":\"find_place_and_nearest_stations\",\"args\":{\"place_name\":\"Central Park\"}}}]}"));
+
+        ChatbotService.Answer answer = chatbot.ask(user, null, "Đi metro đến Central Park?");
+
+        assertThat(answer.answer())
+                .contains("Bạn muốn nói đến địa điểm nào?")
+                .contains("Landmark 81, Bình Thạnh")
+                .contains("Tân Cảng (650 m)")
+                .contains("Central Park, Quận 7");
+        verify(gemini).generate(any(), any(), any());
     }
 
     @Test

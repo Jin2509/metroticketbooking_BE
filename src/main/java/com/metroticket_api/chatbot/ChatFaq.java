@@ -10,7 +10,11 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/** Một mục trong kho tri thức chatbot. Xoá là đánh dấu DELETED. Cột search_vector do Postgres tự sinh. */
+/**
+ * Một mục trong kho tri thức chatbot. Xoá là đánh dấu DELETED.
+ * search_vector do PostgreSQL tự sinh; embedding và embeddingModel bổ sung
+ * semantic search và bảo vệ vector khỏi model embedding không tương thích.
+ */
 @Entity
 @Table(name = "chatbot_faq")
 public class ChatFaq {
@@ -30,6 +34,12 @@ public class ChatFaq {
 
     @Column(columnDefinition = "TEXT")
     private String keywords;
+
+    @Column(columnDefinition = "TEXT")
+    private String embedding;
+
+    @Column(name = "embedding_model", length = 100)
+    private String embeddingModel;
 
     @Column(nullable = false, length = 20)
     private String status;
@@ -62,7 +72,19 @@ public class ChatFaq {
         this.question = question;
         this.answer = answer;
         this.keywords = keywords;
+        this.embedding = null;
+        this.embeddingModel = null;
         this.updatedAt = now;
+    }
+
+    String embeddingText() {
+        return "Danh mục: " + category + "\nCâu hỏi: " + question + "\nTrả lời: " + answer
+                + (keywords == null || keywords.isBlank() ? "" : "\nTừ khóa: " + keywords);
+    }
+
+    void setEmbedding(String embedding, String embeddingModel) {
+        this.embedding = embedding;
+        this.embeddingModel = embeddingModel;
     }
 
     void markDeleted(Instant now) {
@@ -75,6 +97,8 @@ public class ChatFaq {
     public String getQuestion() { return question; }
     public String getAnswer() { return answer; }
     public String getKeywords() { return keywords; }
+    public String getEmbedding() { return embedding; }
+    public String getEmbeddingModel() { return embeddingModel; }
     public String getStatus() { return status; }
     public Instant getUpdatedAt() { return updatedAt; }
 }
