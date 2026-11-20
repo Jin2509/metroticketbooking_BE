@@ -21,8 +21,10 @@ public record GeminiProps(
         @DefaultValue("90s") Duration readTimeout,
         /** Số lần gọi lại khi Gemini lỗi tạm thời (429/5xx/timeout) trước khi chuyển duyệt tay. */
         @DefaultValue("3") int maxAttempts,
-        /** Thời gian chờ trước lần thử lại thứ n = retryBackoff × n. */
-        @DefaultValue("1m") Duration retryBackoff,
+        /** Thời gian chờ cơ sở; client nhân đôi khoảng chờ sau mỗi lần thử thất bại. */
+        @DefaultValue("1s") Duration retryBackoff,
+        /** Giới hạn tối đa cho mỗi khoảng chờ retry để giới hạn tổng thời gian phản hồi. */
+        @DefaultValue("10s") Duration maxRetryDelay,
         @DefaultValue("1024") int maxOutputTokens) {
 
     public boolean configured() {

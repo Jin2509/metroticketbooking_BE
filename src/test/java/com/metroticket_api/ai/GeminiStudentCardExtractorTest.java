@@ -56,7 +56,7 @@ class GeminiStudentCardExtractorTest {
     private GeminiStudentCardExtractor extractor(String key) {
         GeminiProps props = new GeminiProps(true, key, "http://127.0.0.1:" + server.getAddress().getPort() + "/v1beta",
                 "gemini-3.8-flash", "2026-05-20", Duration.ofSeconds(2), Duration.ofSeconds(5), 3,
-                Duration.ofMinutes(1), 1024);
+                Duration.ofSeconds(1), Duration.ofSeconds(10), 1024);
         return new GeminiStudentCardExtractor(props, mapper);
     }
 

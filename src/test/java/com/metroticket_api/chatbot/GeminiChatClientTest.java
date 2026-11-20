@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.time.Duration;
+
 class GeminiChatClientTest {
 
     @ParameterizedTest
@@ -24,5 +26,19 @@ class GeminiChatClientTest {
     void retryClassificationHandlesClientAndServerErrorRanges() {
         assertThat(GeminiChatClient.shouldRetry(599)).isTrue();
         assertThat(GeminiChatClient.shouldRetry(499)).isFalse();
+    }
+
+    @Test
+    void retryDelayUsesExponentialBackoffAndHonorsServerDelayWithinCap() {
+        assertThat(GeminiChatClient.retryDelayMillis(1, Duration.ofSeconds(1), Duration.ofSeconds(10), null, 0))
+                .isEqualTo(1_000);
+        assertThat(GeminiChatClient.retryDelayMillis(3, Duration.ofSeconds(1), Duration.ofSeconds(10), null, 0))
+                .isEqualTo(4_000);
+        assertThat(GeminiChatClient.retryDelayMillis(2, Duration.ofSeconds(1), Duration.ofSeconds(10),
+                Duration.ofSeconds(8), 200)).isEqualTo(8_200);
+        assertThat(GeminiChatClient.retryDelayMillis(5, Duration.ofSeconds(1), Duration.ofSeconds(10),
+                Duration.ofSeconds(30), 0)).isEqualTo(10_000);
+        assertThat(GeminiChatClient.retryDelayMillis(2, Duration.ofSeconds(1), Duration.ofSeconds(10),
+                Duration.ofSeconds(Long.MAX_VALUE), Long.MAX_VALUE)).isEqualTo(10_000);
     }
 }

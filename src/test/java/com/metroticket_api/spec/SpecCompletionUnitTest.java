@@ -17,6 +17,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.data.domain.Pageable;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 import com.lowagie.text.pdf.PdfReader;
 import com.lowagie.text.pdf.parser.PdfTextExtractor;
@@ -43,10 +44,12 @@ class SpecCompletionUnitTest {
     private final ChatSessionRepository sessions = mock(ChatSessionRepository.class);
     private final ChatMessageRepository messages = mock(ChatMessageRepository.class);
     private final ChatFaqRepository faqs = mock(ChatFaqRepository.class);
-    private final ChatFaqSearchService faqSearch = new ChatFaqSearchService(faqs, mock(GeminiEmbeddingClient.class));
+    private final ChatFaqSearchService faqSearch = new ChatFaqSearchService(
+            faqs, mock(GeminiEmbeddingClient.class), new SimpleMeterRegistry());
     private final GeminiChatClient gemini = mock(GeminiChatClient.class);
     private final ChatbotTools tools = mock(ChatbotTools.class);
-    private final ChatbotService chatbot = new ChatbotService(sessions, messages, faqSearch, gemini, tools, Clock.systemUTC());
+    private final ChatbotService chatbot = new ChatbotService(
+            sessions, messages, faqSearch, gemini, tools, Clock.systemUTC(), JSON, new SimpleMeterRegistry());
     private final UUID user = UUID.randomUUID();
 
     private void stubRepositories() {

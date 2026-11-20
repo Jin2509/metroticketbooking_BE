@@ -21,8 +21,18 @@ public interface ChatFaqRepository extends JpaRepository<ChatFaq, Long> {
             """, nativeQuery = true)
     List<ChatFaq> search(String query);
 
-    @Query("select f from ChatFaq f where f.status = 'ACTIVE' and f.embedding is not null and f.embeddingModel = :model")
-    List<ChatFaq> findActiveWithEmbedding(@Param("model") String model);
+    @Query(value = """
+            SELECT f.*
+            FROM chatbot_faq f
+            WHERE f.status = 'ACTIVE'
+              AND f.embedding IS NOT NULL
+              AND f.embedding_model = :model
+              AND (f.embedding::vector(768) <=> CAST(:vector AS vector(768))) <= :maxDistance
+            ORDER BY f.embedding::vector(768) <=> CAST(:vector AS vector(768)), f.id
+            LIMIT 3
+            """, nativeQuery = true)
+    List<ChatFaq> searchSemantic(@Param("vector") String vector, @Param("model") String model,
+            @Param("maxDistance") double maxDistance);
 
     @Query("select f from ChatFaq f where f.status = 'ACTIVE' and (f.embedding is null or f.embeddingModel <> :model or f.embeddingModel is null) order by f.id")
     List<ChatFaq> findActiveNeedingEmbedding(@Param("model") String model, Pageable pageable);

@@ -18,6 +18,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+
 class GeoapifyGeocodingClientTest {
 
     @Test
@@ -31,7 +33,8 @@ class GeoapifyGeocodingClientTest {
                                 "rank", Map.of("confidence", 0.94)),
                         "geometry", Map.of("coordinates", List.of(106.7219, 10.7950))))));
         GeoapifyGeocodingClient client = new GeoapifyGeocodingClient(
-                restTemplate, "https://api.geoapify.com/", "test-key");
+                restTemplate, "https://api.geoapify.com/", "test-key", "106.35,10.35,107.05,11.15",
+                new SimpleMeterRegistry());
 
         assertThat(client.search("Landmark 81"))
                 .containsExactly(new GeoapifyGeocodingClient.PlaceCandidate(
@@ -41,7 +44,7 @@ class GeoapifyGeocodingClientTest {
         verify(restTemplate).getForObject(request.capture(), eq(Object.class));
         assertThat(request.getValue().toString())
                 .contains("/v1/geocode/search?")
-                .contains("filter=countrycode:vn")
+                .contains("filter=rect:106.35,10.35,107.05,11.15")
                 .contains("bias=proximity:106.7000,10.7750")
                 .contains("limit=5")
                 .contains("apiKey=test-key");
@@ -51,16 +54,38 @@ class GeoapifyGeocodingClientTest {
     void returnsNoResultsForBlankQueriesWithoutCallingProvider() {
         RestTemplate restTemplate = mock(RestTemplate.class);
         GeoapifyGeocodingClient client = new GeoapifyGeocodingClient(
-                restTemplate, "https://api.geoapify.com", "test-key");
+                restTemplate, "https://api.geoapify.com", "test-key", "106.35,10.35,107.05,11.15",
+                new SimpleMeterRegistry());
 
         assertThat(client.search("  ")).isEmpty();
         org.mockito.Mockito.verifyNoInteractions(restTemplate);
     }
 
     @Test
+    void filtersProviderResultsOutsideConfiguredBounds() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.getForObject(any(URI.class), eq(Object.class)))
+                .thenReturn(Map.of("features", List.of(
+                        Map.of(
+                                "properties", Map.of("name", "Landmark 81", "formatted", "Landmark 81"),
+                                "geometry", Map.of("coordinates", List.of(106.7219, 10.7950))),
+                        Map.of(
+                                "properties", Map.of("name", "Hanoi", "formatted", "Hanoi, Vietnam"),
+                                "geometry", Map.of("coordinates", List.of(105.8342, 21.0278))))));
+        GeoapifyGeocodingClient client = new GeoapifyGeocodingClient(
+                restTemplate, "https://api.geoapify.com", "test-key", "106.35,10.35,107.05,11.15",
+                new SimpleMeterRegistry());
+
+        assertThat(client.search("a place"))
+                .extracting(GeoapifyGeocodingClient.PlaceCandidate::name)
+                .containsExactly("Landmark 81");
+    }
+
+    @Test
     void failsClearlyWhenGeocodingApiKeyIsMissing() {
         GeoapifyGeocodingClient client = new GeoapifyGeocodingClient(
-                mock(RestTemplate.class), "https://api.geoapify.com", "");
+                mock(RestTemplate.class), "https://api.geoapify.com", "", "106.35,10.35,107.05,11.15",
+                new SimpleMeterRegistry());
 
         assertThatThrownBy(() -> client.search("Landmark 81"))
                 .isInstanceOfSatisfying(ResponseStatusException.class, exception ->

@@ -42,6 +42,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.web.server.ResponseStatusException;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
+import com.metroticket_api.TestPostgresContainer;
 import com.metroticket_api.ai.GeminiProps;
 import com.metroticket_api.ai.StudentCardExtraction;
 import com.metroticket_api.ai.StudentCardExtractor;
@@ -124,7 +125,7 @@ class StudentAndGreenJourneyIntegrationTest {
             return org.mockito.Mockito.mock(com.metroticket_api.notification.push.PushSender.class);
         }
 
-        @Bean @ServiceConnection PostgreSQLContainer postgres() { return new PostgreSQLContainer("postgres:17-alpine"); }
+        @Bean @ServiceConnection PostgreSQLContainer postgres() { return TestPostgresContainer.create(); }
         @Bean MutableClock clock() { return new MutableClock(); }
         @Bean FakeExtractor extractor() { return new FakeExtractor(); }
         @Bean NotificationService notificationService() { return mock(NotificationService.class); }

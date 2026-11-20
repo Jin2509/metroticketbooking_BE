@@ -18,7 +18,7 @@ class DemoProductDataMigrationTest {
 
     @Test
     void migrationCreatesDemoAccountsAndSeedsConsistentDemoData() throws SQLException {
-        try (PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:17-alpine")) {
+        try (PostgreSQLContainer postgres = TestPostgresContainer.create()) {
             postgres.start();
             migrate(postgres, "19", Map.of(
                     "admin-email", "",
@@ -93,7 +93,7 @@ class DemoProductDataMigrationTest {
 
     @Test
     void migrationSkipsDemoDataOutsideLocalAndDevProfiles() throws SQLException {
-        try (PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:17-alpine")) {
+        try (PostgreSQLContainer postgres = TestPostgresContainer.create()) {
             postgres.start();
             migrate(postgres, null, Map.of(
                     "admin-email", "",

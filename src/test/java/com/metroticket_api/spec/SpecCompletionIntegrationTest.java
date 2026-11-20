@@ -37,6 +37,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.web.server.ResponseStatusException;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
+import com.metroticket_api.TestPostgresContainer;
 import com.metroticket_api.chatbot.ChatFaqRepository;
 import com.metroticket_api.chatbot.ChatFaqService;
 import com.metroticket_api.chatbot.ChatbotController.FaqRequest;
@@ -144,7 +145,7 @@ class SpecCompletionIntegrationTest {
         @Bean
         @ServiceConnection
         PostgreSQLContainer postgres() {
-            return new PostgreSQLContainer("postgres:17-alpine");
+            return TestPostgresContainer.create();
         }
 
         @Bean

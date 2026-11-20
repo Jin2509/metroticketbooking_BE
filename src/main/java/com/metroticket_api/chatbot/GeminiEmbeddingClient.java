@@ -1,15 +1,19 @@
 package com.metroticket_api.chatbot;
 
 import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
-import java.util.StringJoiner;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -60,6 +64,7 @@ public class GeminiEmbeddingClient {
         return model;
     }
 
+    @Cacheable(value = "chatbot-query-embeddings", key = "#root.target.cacheKey(#text)")
     public List<Double> embed(String text) throws EmbeddingException {
         if (!available()) {
             throw new EmbeddingException("Gemini embeddings are not configured", null);
@@ -81,8 +86,8 @@ public class GeminiEmbeddingClient {
             throw new EmbeddingException("Gemini embedding request failed", exception);
         }
         JsonNode values = response == null ? null : response.path("embedding").path("values");
-        if (values == null || !values.isArray() || values.isEmpty()) {
-            throw new EmbeddingException("Gemini returned an invalid embedding", null);
+        if (values == null || !values.isArray() || values.size() != OUTPUT_DIMENSIONALITY) {
+            throw new EmbeddingException("Gemini returned an embedding with an invalid dimension", null);
         }
         List<Double> vector = new ArrayList<>(values.size());
         for (JsonNode value : values) {
@@ -95,9 +100,29 @@ public class GeminiEmbeddingClient {
         return List.copyOf(vector);
     }
 
+    public String cacheKey(String text) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update(model.getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            return HexFormat.of().formatHex(digest.digest(text.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
     static String serialize(List<Double> vector) {
-        StringJoiner result = new StringJoiner(",");
-        vector.forEach(value -> result.add(Double.toString(value)));
-        return result.toString();
+        return serializeVector(vector);
+    }
+
+    static String serializeVector(List<Double> vector) {
+        StringBuilder result = new StringBuilder("[");
+        for (int i = 0; i < vector.size(); i++) {
+            if (i > 0) {
+                result.append(',');
+            }
+            result.append(vector.get(i));
+        }
+        return result.append(']').toString();
     }
 }

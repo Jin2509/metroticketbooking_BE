@@ -33,6 +33,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
+import com.metroticket_api.TestPostgresContainer;
 import com.metroticket_api.mail.MailMessage;
 import com.metroticket_api.mail.MailSender;
 import com.metroticket_api.mail.MailTemplates;
@@ -87,7 +88,7 @@ class NotificationPlatformIntegrationTest {
 
     @TestConfiguration(proxyBeanMethods = false)
     static class Config {
-        @Bean @ServiceConnection PostgreSQLContainer postgres() { return new PostgreSQLContainer("postgres:17-alpine"); }
+        @Bean @ServiceConnection PostgreSQLContainer postgres() { return TestPostgresContainer.create(); }
         @Bean MutableClock clock() { return new MutableClock(); }
         @Bean FakePush pushSender() { return new FakePush(); }
         @Bean MailSender mailSender() { return mock(MailSender.class); }

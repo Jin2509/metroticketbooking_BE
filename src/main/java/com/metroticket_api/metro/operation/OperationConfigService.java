@@ -6,6 +6,7 @@ import java.time.LocalTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.http.HttpStatus;
@@ -74,6 +75,21 @@ public class OperationConfigService {
                 .sorted(Comparator.comparing(OperationConfig::getVersion).reversed())
                 .map(OperationConfigResponse::of)
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<OperationConfigResponse> currentActiveForLine(Long lineId) {
+        MetroLine line = lines.findById(lineId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy tuyến"));
+        if (line.getStatus() != MetroLineStatus.ACTIVE) {
+            return Optional.empty();
+        }
+        Instant now = clock.instant();
+        return configs.findByLineIdAndStatus(lineId, OperationConfigStatus.ACTIVE).stream()
+                .filter(config -> !config.getEffectiveFrom().isAfter(now))
+                .filter(config -> config.getEffectiveTo() == null || config.getEffectiveTo().isAfter(now))
+                .max(Comparator.comparing(OperationConfig::getEffectiveFrom))
+                .map(OperationConfigResponse::of);
     }
 
     @Transactional(readOnly = true)

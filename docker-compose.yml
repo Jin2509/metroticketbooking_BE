@@ -2,7 +2,7 @@ services:
   # Chỉ dùng khi muốn DB local: docker compose --profile local-db up -d. Mặc định dùng Neon theo DB_URL trong .env
   postgres:
     profiles: [local-db]
-    image: postgres:17-alpine
+    image: pgvector/pgvector:pg17
     restart: unless-stopped
     environment:
       POSTGRES_DB: metroticket

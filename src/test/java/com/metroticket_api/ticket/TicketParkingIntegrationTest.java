@@ -28,6 +28,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.server.ResponseStatusException;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
+import com.metroticket_api.TestPostgresContainer;
 import com.metroticket_api.metro.map.MapDtos.NetworkResponse;
 import com.metroticket_api.metro.map.MapService;
 import com.metroticket_api.metro.staff.StaffStationService;
@@ -98,7 +99,7 @@ class TicketParkingIntegrationTest {
         @Bean
         @ServiceConnection
         PostgreSQLContainer postgres() {
-            return new PostgreSQLContainer("postgres:17-alpine");
+            return TestPostgresContainer.create();
         }
 
         @Bean

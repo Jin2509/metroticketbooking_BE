@@ -1,13 +1,18 @@
 package com.metroticket_api.chatbot;
 
 import java.net.http.HttpClient;
+import java.time.Instant;
 import java.time.Duration;
+import java.time.format.DateTimeFormatter;
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -38,9 +43,11 @@ public class GeminiChatClient {
 
     private final GeminiProps props;
     private final RestClient http;
+    private final MeterRegistry meters;
 
-    public GeminiChatClient(GeminiProps props) {
+    public GeminiChatClient(GeminiProps props, MeterRegistry meters) {
         this.props = props;
+        this.meters = meters;
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(
                 HttpClient.newBuilder().connectTimeout(props.connectTimeout()).build());
         factory.setReadTimeout(props.readTimeout());
@@ -63,6 +70,9 @@ public class GeminiChatClient {
         Duration retryBackoff = props.retryBackoff().isNegative()
                 ? Duration.ZERO
                 : props.retryBackoff();
+        Duration maxRetryDelay = props.maxRetryDelay().isNegative()
+                ? Duration.ZERO
+                : props.maxRetryDelay();
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
@@ -84,14 +94,18 @@ public class GeminiChatClient {
                     throw new ChatException("Gọi Gemini thất bại", e);
                 }
                 log.warn("Gemini HTTP {}; thử lại lần {}/{}", status, attempt + 1, maxAttempts);
-                sleepBeforeRetry(attempt, retryBackoff);
+                meters.counter("chatbot.gemini.retries", "status", Integer.toString(status)).increment();
+                sleepBeforeRetry(attempt, retryBackoff, maxRetryDelay,
+                        retryAfter(e.getResponseHeaders()), ThreadLocalRandom.current().nextLong(0, 251));
             } catch (RestClientException e) {
                 if (attempt == maxAttempts) {
                     log.warn("Gọi Gemini thất bại sau {} lần thử: {}", attempt, e.getMessage());
                     throw new ChatException("Gọi Gemini thất bại", e);
                 }
                 log.warn("Gọi Gemini I/O lỗi; thử lại lần {}/{}", attempt + 1, maxAttempts);
-                sleepBeforeRetry(attempt, retryBackoff);
+                meters.counter("chatbot.gemini.retries", "status", "io").increment();
+                sleepBeforeRetry(attempt, retryBackoff, maxRetryDelay, null,
+                        ThreadLocalRandom.current().nextLong(0, 251));
             } catch (ChatException e) {
                 throw e;
             }
@@ -103,10 +117,56 @@ public class GeminiChatClient {
         return status == 408 || status == 429 || status >= 500;
     }
 
-    private void sleepBeforeRetry(int completedAttempts, Duration retryBackoff) throws ChatException {
-        long baseMillis = retryBackoff.toMillis() * completedAttempts;
-        long jitterMillis = ThreadLocalRandom.current().nextLong(0, 250);
-        long delayMillis = Math.max(0, baseMillis) + jitterMillis;
+    static long retryDelayMillis(int completedAttempts, Duration retryBackoff, Duration maxRetryDelay,
+            Duration serverRetryAfter, long jitterMillis) {
+        int exponent = Math.max(0, Math.min(completedAttempts - 1, 10));
+        long backoffMillis = Math.max(0, retryBackoff.toMillis());
+        long maximumMillis = Math.max(0, maxRetryDelay.toMillis());
+        long multiplier = 1L << exponent;
+        long exponentialMillis = backoffMillis > maximumMillis / multiplier
+                ? maximumMillis
+                : backoffMillis * multiplier;
+        long requestedMillis = serverRetryAfter == null
+                ? exponentialMillis
+                : Math.max(exponentialMillis, boundedMillis(serverRetryAfter, maximumMillis));
+        long boundedMillis = Math.min(maximumMillis, requestedMillis);
+        long jitter = Math.max(0, jitterMillis);
+        return boundedMillis > maximumMillis - Math.min(maximumMillis, jitter)
+                ? maximumMillis
+                : boundedMillis + jitter;
+    }
+
+    private static long boundedMillis(Duration duration, long maximumMillis) {
+        if (duration.isNegative() || duration.isZero()) {
+            return 0;
+        }
+        Duration maximum = Duration.ofMillis(maximumMillis);
+        return duration.compareTo(maximum) >= 0 ? maximumMillis : duration.toMillis();
+    }
+
+    private static Duration retryAfter(HttpHeaders headers) {
+        String value = headers == null ? null : headers.getFirst(HttpHeaders.RETRY_AFTER);
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Duration.ofSeconds(Math.max(0, Long.parseLong(value.trim())));
+        } catch (NumberFormatException ignored) {
+            try {
+                Instant retryAt = ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant();
+                Duration delay = Duration.between(Instant.now(), retryAt);
+                return delay.isNegative() ? Duration.ZERO : delay;
+            } catch (RuntimeException invalidDate) {
+                log.debug("Ignoring invalid Gemini Retry-After header");
+                return null;
+            }
+        }
+    }
+
+    private void sleepBeforeRetry(int completedAttempts, Duration retryBackoff, Duration maxRetryDelay,
+            Duration serverRetryAfter, long jitterMillis) throws ChatException {
+        long delayMillis = retryDelayMillis(
+                completedAttempts, retryBackoff, maxRetryDelay, serverRetryAfter, jitterMillis);
         if (delayMillis == 0) {
             return;
         }

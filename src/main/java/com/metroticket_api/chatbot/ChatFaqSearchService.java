@@ -6,9 +6,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -28,39 +28,36 @@ public class ChatFaqSearchService {
     private static final int MAX_RESULTS = 3;
     private static final int RRF_K = 60;
     private static final double MIN_COSINE_SIMILARITY = 0.30;
+    private static final double MAX_COSINE_DISTANCE = 1 - MIN_COSINE_SIMILARITY;
 
     private final ChatFaqRepository faqs;
     private final GeminiEmbeddingClient embeddings;
+    private final MeterRegistry meters;
 
-    public ChatFaqSearchService(ChatFaqRepository faqs, GeminiEmbeddingClient embeddings) {
+    public ChatFaqSearchService(ChatFaqRepository faqs, GeminiEmbeddingClient embeddings, MeterRegistry meters) {
         this.faqs = faqs;
         this.embeddings = embeddings;
+        this.meters = meters;
     }
 
     public List<ChatFaq> search(String question) {
         String query = toTsQuery(question);
         List<ChatFaq> lexical = query.isEmpty() ? List.of() : faqs.search(query);
         if (!embeddings.available()) {
+            meters.counter("chatbot.faq.retrieval", "mode", "full_text").increment();
             return lexical;
         }
         try {
             List<Double> queryVector = embeddings.embed(question);
-            List<ChatFaq> semantic = semanticResults(queryVector);
+            List<ChatFaq> semantic = faqs.searchSemantic(
+                    GeminiEmbeddingClient.serializeVector(queryVector), embeddings.model(), MAX_COSINE_DISTANCE);
+            meters.counter("chatbot.faq.retrieval", "mode", "hybrid").increment();
             return reciprocalRankFusion(lexical, semantic);
         } catch (EmbeddingException exception) {
             log.warn("Semantic FAQ retrieval unavailable; falling back to PostgreSQL full-text search", exception);
+            meters.counter("chatbot.faq.retrieval", "mode", "fallback").increment();
             return lexical;
         }
-    }
-
-    private List<ChatFaq> semanticResults(List<Double> queryVector) {
-        return faqs.findActiveWithEmbedding(embeddings.model()).stream()
-                .map(faq -> new Similarity(faq, cosineSimilarity(queryVector, faq.getEmbedding())))
-                .filter(result -> result.score() >= MIN_COSINE_SIMILARITY)
-                .sorted(Comparator.comparingDouble(Similarity::score).reversed())
-                .limit(MAX_RESULTS)
-                .map(Similarity::faq)
-                .toList();
     }
 
     private List<ChatFaq> reciprocalRankFusion(List<ChatFaq> lexical, List<ChatFaq> semantic) {
@@ -84,48 +81,12 @@ public class ChatFaqSearchService {
         }
     }
 
-    private static double cosineSimilarity(List<Double> query, String stored) {
-        Optional<List<Double>> parsed = parseVector(stored);
-        if (parsed.isEmpty() || query.size() != parsed.get().size()) {
-            return -1;
-        }
-        double dot = 0;
-        double queryNorm = 0;
-        double storedNorm = 0;
-        for (int i = 0; i < query.size(); i++) {
-            double q = query.get(i);
-            double value = parsed.get().get(i);
-            dot += q * value;
-            queryNorm += q * q;
-            storedNorm += value * value;
-        }
-        if (queryNorm == 0 || storedNorm == 0) {
-            return -1;
-        }
-        return dot / (Math.sqrt(queryNorm) * Math.sqrt(storedNorm));
-    }
-
-    private static Optional<List<Double>> parseVector(String stored) {
-        if (stored == null || stored.isBlank()) {
-            return Optional.empty();
-        }
-        try {
-            return Optional.of(Arrays.stream(stored.split(",")).map(Double::parseDouble).toList());
-        } catch (NumberFormatException exception) {
-            log.warn("Ignoring malformed stored FAQ embedding");
-            return Optional.empty();
-        }
-    }
-
     static String toTsQuery(String text) {
         return Arrays.stream(text.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+"))
                 .filter(word -> word.length() >= 2)
                 .distinct()
                 .limit(MAX_QUERY_TERMS)
                 .collect(Collectors.joining(" | "));
-    }
-
-    private record Similarity(ChatFaq faq, double score) {
     }
 
     private record RankedFaq(ChatFaq faq, double score) {

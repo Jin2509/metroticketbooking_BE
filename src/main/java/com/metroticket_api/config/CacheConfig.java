@@ -30,7 +30,8 @@ public class CacheConfig {
         Map<String, Duration> ttlByName = Map.of(
                 "facility-nearby", Duration.ofMinutes(60),
                 "bus-nearby", Duration.ofMinutes(15),
-                "bus-routes", Duration.ofMinutes(30));
+                "bus-routes", Duration.ofMinutes(30),
+                "chatbot-query-embeddings", Duration.ofMinutes(10));
         return new ExpiringCacheManager(ttlByName);
     }
 

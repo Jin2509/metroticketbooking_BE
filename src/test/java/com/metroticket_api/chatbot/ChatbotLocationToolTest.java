@@ -16,8 +16,11 @@ import com.metroticket_api.external.facility.FacilityService;
 import com.metroticket_api.external.facility.GeoapifyGeocodingClient;
 import com.metroticket_api.external.facility.GeoapifyGeocodingClient.PlaceCandidate;
 import com.metroticket_api.loyalty.LoyaltyService;
+import com.metroticket_api.metro.announcement.AnnouncementService;
 import com.metroticket_api.metro.common.StationStatus;
+import com.metroticket_api.metro.line.MetroLineRepository;
 import com.metroticket_api.metro.map.MapService;
+import com.metroticket_api.metro.operation.OperationConfigService;
 import com.metroticket_api.metro.station.LineStationRepository;
 import com.metroticket_api.metro.station.Station;
 import com.metroticket_api.metro.station.StationRepository;
@@ -82,6 +85,21 @@ class ChatbotLocationToolTest {
         assertThat(nearest.get("name")).isEqualTo("Ga gần nhất");
     }
 
+    @Test
+    void declaresOperationalScheduleAndOptionalAnnouncementTools() {
+        List<Map<String, Object>> declarations = tool(
+                mock(GeoapifyGeocodingClient.class), mock(StationRepository.class)).declarations();
+
+        assertThat(declarations).extracting(declaration -> declaration.get("name"))
+                .contains("get_operation_schedule", "get_service_announcements");
+        Map<?, ?> announcements = declarations.stream()
+                .filter(declaration -> declaration.get("name").equals("get_service_announcements"))
+                .map(declaration -> (Map<?, ?>) declaration.get("parameters"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(announcements.containsKey("required")).isFalse();
+    }
+
     private static ChatbotTools tool(GeoapifyGeocodingClient geocoding, StationRepository stations) {
         return new ChatbotTools(
                 mock(TicketProductService.class),
@@ -95,6 +113,9 @@ class ChatbotLocationToolTest {
                 mock(BusService.class),
                 mock(FareService.class),
                 geocoding,
+                mock(MetroLineRepository.class),
+                mock(OperationConfigService.class),
+                mock(AnnouncementService.class),
                 mock(PlatformTransactionManager.class));
     }
 

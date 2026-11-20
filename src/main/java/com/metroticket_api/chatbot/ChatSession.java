@@ -27,6 +27,12 @@ public class ChatSession {
     @Column(name = "last_message_at", nullable = false)
     private Instant lastMessageAt;
 
+    @Column(name = "pending_place_resolution", columnDefinition = "TEXT")
+    private String pendingPlaceResolution;
+
+    @Column(name = "pending_place_expires_at")
+    private Instant pendingPlaceExpiresAt;
+
     protected ChatSession() {
     }
 
@@ -38,6 +44,24 @@ public class ChatSession {
 
     void touch(Instant now) {
         lastMessageAt = now;
+    }
+
+    void setPendingPlaceResolution(String value, Instant expiresAt) {
+        pendingPlaceResolution = value;
+        pendingPlaceExpiresAt = expiresAt;
+    }
+
+    void clearPendingPlaceResolution() {
+        pendingPlaceResolution = null;
+        pendingPlaceExpiresAt = null;
+    }
+
+    String getPendingPlaceResolution() {
+        return pendingPlaceResolution;
+    }
+
+    Instant getPendingPlaceExpiresAt() {
+        return pendingPlaceExpiresAt;
     }
 
     public Long getId() { return id; }

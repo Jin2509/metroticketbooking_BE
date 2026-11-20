@@ -54,6 +54,7 @@ public class SecurityConfig {
                 // Trang lỗi nội bộ của Tomcat: nếu chặn, mọi lỗi đi qua /error sẽ biến thành 401/403
                 .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                 .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                .requestMatchers("/actuator/metrics", "/actuator/metrics/**").authenticated()
                 .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**", "/webjars/**").permitAll()
                 .requestMatchers("/ws/lines/**").permitAll()
                 // Bản đồ, tìm đường, giờ tàu, giá vé, loại vé, bãi xe: tra cứu công khai (chỉ GET)

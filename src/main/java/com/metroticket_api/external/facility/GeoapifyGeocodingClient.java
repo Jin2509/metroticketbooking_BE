@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -33,13 +34,19 @@ public class GeoapifyGeocodingClient {
     private final RestTemplate restTemplate;
     private final String baseUrl;
     private final String apiKey;
+    private final Region region;
+    private final MeterRegistry meters;
 
     public GeoapifyGeocodingClient(@Qualifier("facilityRestTemplate") RestTemplate restTemplate,
             @Value("${app.external.geoapify.base-url:https://api.geoapify.com}") String baseUrl,
-            @Value("${app.external.geoapify.api-key:}") String apiKey) {
+            @Value("${app.external.geoapify.api-key:}") String apiKey,
+            @Value("${app.external.geoapify.hcmc-bbox:106.35,10.35,107.05,11.15}") String bounds,
+            MeterRegistry meters) {
         this.restTemplate = restTemplate;
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.apiKey = apiKey;
+        this.region = Region.parse(bounds);
+        this.meters = meters;
     }
 
     public List<PlaceCandidate> search(String query) {
@@ -51,7 +58,7 @@ public class GeoapifyGeocodingClient {
         }
         URI uri = UriComponentsBuilder.fromUriString(baseUrl + "/v1/geocode/search")
                 .queryParam("text", query.trim())
-                .queryParam("filter", "countrycode:vn")
+                .queryParam("filter", "rect:" + region.asGeoapifyBounds())
                 .queryParam("bias", "proximity:106.7000,10.7750")
                 .queryParam("lang", "vi")
                 .queryParam("limit", MAX_RESULTS)
@@ -69,14 +76,17 @@ public class GeoapifyGeocodingClient {
             for (Object value : features) {
                 if (value instanceof Map<?, ?> feature) {
                     PlaceCandidate candidate = candidate(feature);
-                    if (candidate != null && seen.add(identity(candidate))) {
+                    if (candidate != null && region.contains(candidate)
+                            && seen.add(identity(candidate))) {
                         result.add(candidate);
                     }
                 }
             }
+            meters.counter("chatbot.geocoding.requests", "result", result.isEmpty() ? "not_found" : "resolved").increment();
             return List.copyOf(result);
         } catch (RestClientException exception) {
             log.warn("Geoapify geocoding call failed: {}", exception.getMessage());
+            meters.counter("chatbot.geocoding.requests", "result", "provider_error").increment();
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Unable to geocode the requested place", exception);
         }
     }
@@ -124,6 +134,40 @@ public class GeoapifyGeocodingClient {
 
     private static Number number(Object value) {
         return value instanceof Number number ? number : null;
+    }
+
+    private record Region(double west, double south, double east, double north) {
+        static Region parse(String bounds) {
+            String[] values = bounds.split(",");
+            if (values.length != 4) {
+                throw new IllegalArgumentException("Geoapify HCMC bounds must be west,south,east,north");
+            }
+            try {
+                Region region = new Region(
+                        Double.parseDouble(values[0].trim()),
+                        Double.parseDouble(values[1].trim()),
+                        Double.parseDouble(values[2].trim()),
+                        Double.parseDouble(values[3].trim()));
+                if (!Double.isFinite(region.west()) || !Double.isFinite(region.south())
+                        || !Double.isFinite(region.east()) || !Double.isFinite(region.north())
+                        || region.west() >= region.east() || region.south() >= region.north()) {
+                    throw new IllegalArgumentException("Geoapify HCMC bounds are invalid");
+                }
+                return region;
+            } catch (NumberFormatException exception) {
+                throw new IllegalArgumentException("Geoapify HCMC bounds must contain valid coordinates", exception);
+            }
+        }
+
+        boolean contains(PlaceCandidate candidate) {
+            double latitude = candidate.latitude().doubleValue();
+            double longitude = candidate.longitude().doubleValue();
+            return longitude >= west && longitude <= east && latitude >= south && latitude <= north;
+        }
+
+        String asGeoapifyBounds() {
+            return west + "," + south + "," + east + "," + north;
+        }
     }
 
     public record PlaceCandidate(String name, String formatted, BigDecimal latitude, BigDecimal longitude, double confidence) {

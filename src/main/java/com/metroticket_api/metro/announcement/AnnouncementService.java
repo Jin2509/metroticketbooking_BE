@@ -84,6 +84,17 @@ public class AnnouncementService {
     }
 
     @Transactional(readOnly = true)
+    public List<AnnouncementResponse> listPublishedForChatbot(Set<Long> lineIds, Long stationId) {
+        Instant now = clock.instant();
+        return announcements.findAllByStatusOrderByStartsAtDesc(AnnouncementStatus.APPROVED).stream()
+                .filter(announcement -> isVisibleToCurrentUser(announcement, now))
+                .filter(announcement -> matchesChatbotTarget(announcement, lineIds, stationId))
+                .limit(10)
+                .map(AnnouncementResponse::of)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
     public Announcement getById(Long id) {
         return announcements.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy thông báo"));
@@ -257,6 +268,19 @@ public class AnnouncementService {
             return true;
         }
         return currentRoles().contains(a.getTargetRole().toUpperCase());
+    }
+
+    private static boolean matchesChatbotTarget(Announcement announcement, Set<Long> lineIds, Long stationId) {
+        if (lineIds.isEmpty() && stationId == null) {
+            return true;
+        }
+        return switch (announcement.getScope()) {
+            case ALL, ROLE -> true;
+            case LINE -> announcement.getLine() != null
+                    && lineIds.contains(announcement.getLine().getId());
+            case STATION -> stationId != null && announcement.getStation() != null
+                    && stationId.equals(announcement.getStation().getId());
+        };
     }
 
     private static Set<String> currentRoles() {
